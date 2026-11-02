@@ -94,8 +94,8 @@ jobs:
           # — compiles under Alpine fine, but needs `linux-headers` on top
           # of the usual `$PHPIZE_DEPS` (confirmed directly; see
           # docs/runtime-adapters.md), and every step below is its own
-          # separate, stateless container — installing/PHPStan/Psalm x2/
-          # PHPUnit — so compiling it from source five times per PHP
+          # separate, stateless container — installing/PHPStan/Psalm/
+          # PHPUnit — so compiling it from source four times per PHP
           # version, on every push, for an extension nothing this
           # package's own code, PHPStan, Psalm, or its committed (real-
           # binary-free) unit suite ever loads, is real wasted cost with
@@ -204,16 +204,10 @@ jobs:
       - name: PHPStan
         run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-image }}-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
-      # Two Psalm passes, deliberately: --taint-analysis reports taint
-      # issues only, suppressing every ordinary issue type — a plain run
-      # is what catches those.
+      # One run reports both ordinary and taint issues. --taint-analysis
+      # keeps taint tracking on whatever a package's psalm.xml sets.
       - name: Psalm
-        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-image }}-cli-alpine php vendor/bin/psalm --no-progress
-
-      - name: Psalm (taint analysis)
-        # Psalm 6.17.1 requires disabled engine assertions for first-class
-        # callables during taint analysis (vimeo/psalm#11932).
-        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-image }}-cli-alpine php -d zend.assertions=-1 vendor/bin/psalm --taint-analysis --no-progress --report=psalm.sarif --report-show-info=false
+        run: docker run --rm -v "$PWD":/app -w /app/${{ matrix.package.dir }} php:${{ matrix.php-image }}-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress --report=psalm.sarif --report-show-info=false
 
       - name: Upload Psalm SARIF to code scanning
         # Requires GitHub Code Security enabled on the repo to work while

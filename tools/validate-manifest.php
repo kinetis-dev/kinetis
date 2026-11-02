@@ -969,9 +969,7 @@ function validatorMain(array $argv = []): int
     return $ok ? 0 : 1;
 }
 
-// See generate-composer.php for the entry-point guard and the Psalm
-// suppression it carries.
-/** @psalm-suppress ParadoxicalCondition */
+// See generate-composer.php for the entry-point guard.
 if (current(get_included_files()) === __FILE__) {
     exit(validatorMain($argv ?? []));
 }

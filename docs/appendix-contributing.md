@@ -121,12 +121,7 @@ docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php
 # Static analysis (PHPStan, level 8 everywhere)
 docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
 
-# Type analysis (Psalm)
-docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php vendor/bin/psalm --no-progress
-
-# Data-flow / taint analysis (Psalm again — --taint-analysis reports
-# taint issues only and suppresses every ordinary issue type, so the
-# plain run above is what catches those)
+# Type and taint analysis (Psalm, one run reports both)
 docker run --rm -v "$PWD":/app -w /app/packages/<name> php:8.4.27-cli-alpine php vendor/bin/psalm --taint-analysis --no-progress
 ```
 

@@ -359,8 +359,6 @@ own matrix records:
   docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine \
     php vendor/bin/phpstan analyse --no-progress --memory-limit=512M
   docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine \
-    php vendor/bin/psalm --no-progress
-  docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine \
     php vendor/bin/psalm --no-progress --taint-analysis
   ```
 
@@ -379,14 +377,11 @@ docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4.27-cli-alpine \
 
 ## 10. Psalm every affected package
 
-Every package carries a `psalm.xml`, `tools/` included. Both passes, as
-`ci.yml` runs them: `--taint-analysis` reports taint issues only and
-suppresses every ordinary issue type, so the plain run is what catches
-those.
+Every package carries a `psalm.xml`, `tools/` included. One run, as
+`ci.yml` runs it: `--taint-analysis` reports ordinary and taint issues
+together.
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4.27-cli-alpine \
-  php vendor/bin/psalm --no-progress
 docker run --rm -v "$PWD":/app -w /app/packages/<pkg> php:8.4.27-cli-alpine \
   php vendor/bin/psalm --no-progress --taint-analysis
 ```

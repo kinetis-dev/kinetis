@@ -22,7 +22,7 @@
         "kinetis/redis": "dev-main",
         "phpstan/phpstan": "^2.2.8",
         "phpunit/phpunit": "^13.3.3",
-        "vimeo/psalm": "^6.17"
+        "vimeo/psalm": "^7.0"
     },
     "suggest": {
         "kinetis/persistence": "Enables SqlSessionStore, sessions in a kinetis_sessions table over the SQL contracts.",
