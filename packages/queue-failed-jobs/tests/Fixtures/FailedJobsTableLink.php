@@ -9,13 +9,15 @@ use Kinetis\Persistence\Contract\SqlResult;
 use Kinetis\Persistence\Contract\SqlTransaction;
 use Kinetis\Persistence\Driver\BufferedSqlResult;
 use LogicException;
+use RuntimeException;
 
 /**
  * An in-memory `kinetis_failed_jobs` behind SqlLink, answering exactly
  * the statements SqlFailedJobStore issues, for command tests that need a
  * store but not a server. Values are kept as strings, as the drivers
  * return them, so the store's decoders run. Anything else it is sent
- * fails loudly. The real SQL is covered by tests/Integration.
+ * fails loudly, and a single-record DELETE fails when $refuseForget is
+ * set. The real SQL is covered by tests/Integration.
  */
 final class FailedJobsTableLink implements SqlLink
 {
@@ -28,6 +30,8 @@ final class FailedJobsTableLink implements SqlLink
     public array $rows = [];
 
     public int $closeCalls = 0;
+
+    public bool $refuseForget = false;
 
     #[\Override]
     public function query(string $sql): SqlResult
@@ -61,6 +65,10 @@ final class FailedJobsTableLink implements SqlLink
         }
 
         if ($sql === 'DELETE FROM kinetis_failed_jobs WHERE id = ?') {
+            if ($this->refuseForget) {
+                throw new RuntimeException('The database refused the delete.');
+            }
+
             $deleted = isset($this->rows[$params[0]]) ? 1 : 0;
             unset($this->rows[$params[0]]);
 

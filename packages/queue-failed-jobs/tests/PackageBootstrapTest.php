@@ -12,8 +12,10 @@ use Kinetis\Container\AppScope;
 use Kinetis\Queue\Console\WorkCommand;
 use Kinetis\Queue\FailedJobRecorderInterface;
 use Kinetis\Queue\QueueInterface;
+use Kinetis\QueueFailedJobs\FailedJobRetrier;
 use Kinetis\QueueFailedJobs\PackageBootstrap;
 use Kinetis\QueueFailedJobs\SqlFailedJobStore;
+use Kinetis\QueueFailedJobs\Tests\Fixtures\FailedJobsTableLink;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -33,6 +35,20 @@ final class PackageBootstrapTest extends TestCase
 
         self::assertTrue($app->has(SqlFailedJobStore::class));
         self::assertTrue($app->has(FailedJobRecorderInterface::class));
+        self::assertTrue($app->has(FailedJobRetrier::class));
+    }
+
+    public function test_the_retrier_is_one_application_scoped_instance(): void
+    {
+        $app = new AppScope();
+        new PackageBootstrap()->register($app, new Config([]));
+        $app->instance(SqlFailedJobStore::class, new SqlFailedJobStore(new FailedJobsTableLink()));
+        $app->boot();
+
+        $retrier = $app->get(FailedJobRetrier::class);
+
+        self::assertInstanceOf(FailedJobRetrier::class, $retrier);
+        self::assertSame($retrier, $app->createRequestScope()->get(FailedJobRetrier::class));
     }
 
     /**

@@ -325,7 +325,9 @@ log entry is the only persistent record, and the production default
 `Kinetis\Queue\Events\JobFailedPermanently` once the backend has deleted
 the job, with the same redacted data and the failed-job record's id, so
 a listener can alert someone. `JobSucceeded` and `JobReleased` report
-the other outcomes — see {doc}`events`. A throwing listener, telemetry backend or logger never
+the other outcomes — see {doc}`events`. All four worker events carry
+`durationMs`, the job handler's wall-clock time in this worker in
+milliseconds, excluding pop and settlement. A throwing listener, telemetry backend or logger never
 changes a job's outcome
 ([observers](appendix-queue.md#observers-never-decide-or-rewrite-the-outcome)).
 

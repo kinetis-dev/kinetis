@@ -335,7 +335,7 @@
             "description": "A backend-agnostic background job queue for Kinetis — no fluent job-scheduling DSL. Redis, SQL, SQS, and RabbitMQ backends each live in their own separate package.",
             "namespace": "Kinetis\\Queue\\",
             "testNamespace": "Kinetis\\Queue\\Tests\\",
-            "version": "1.8.0",
+            "version": "1.9.0",
             "requires": [
                 "framework"
             ],
@@ -482,7 +482,7 @@
             "description": "Retained failed jobs for kinetis/queue — every job the worker gives up on is recorded in a MySQL/Postgres table before the backend deletes it, with commands to list, retry, forget and prune the records.",
             "namespace": "Kinetis\\QueueFailedJobs\\",
             "testNamespace": "Kinetis\\QueueFailedJobs\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "requires": [
                 "framework",
                 "queue",
