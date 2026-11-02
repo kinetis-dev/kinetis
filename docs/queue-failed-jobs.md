@@ -100,10 +100,9 @@ argument does, since nothing says which ones were sensitive.
 failed on, with the `maxAttempts` it was pushed with, and then forgets
 its record. A record with no connection goes to the bound queue; a named
 one goes to that queue connection, built from its `QUEUE_{NAME}_*` keys
-as `queue:work --connection` builds it. A record whose retry fails — the
-class no longer exists or no longer accepts the stored arguments, the
-connection is no longer configured, the push is refused — is reported
-and kept, and the command exits 1. `--all` works through every selected
+as `queue:work --connection` builds it. A record that is missing or
+whose retry fails (see [Retrying from code](#retrying-from-code)) is
+reported, and the command exits 1. `--all` works through every selected
 record oldest first, reports how many were retried and how many failed,
 and leaves records of jobs that failed after it started for the next
 run.
@@ -111,6 +110,58 @@ run.
 `queue:forget` deletes one record without retrying it. `queue:prune`
 deletes every record older than `--hours`, which has no default; nothing
 is pruned automatically.
+
+## Retrying from code
+
+`Kinetis\QueueFailedJobs\FailedJobRetrier` is what `queue:retry` runs,
+bound in the application scope for a dashboard or any other application
+code to inject:
+
+```{code-block} php
+use Kinetis\QueueFailedJobs\FailedJobRetrier;
+use Kinetis\QueueFailedJobs\RetryStatus;
+
+$result = $retrier->retry('3f9c0b2a64d14e8f9a0c51d7e2b46a18');
+$results = $retrier->retryMany([$first, $second]);
+$results = $retrier->retryMatching(null, 'mail', limit: 100);
+
+foreach ($results as $result) {
+    if ($result->status === RetryStatus::Failed) {
+        $logger->warning("Could not retry {$result->id} ({$result->class}): {$result->reason}");
+    }
+}
+```
+
+`retryMatching()` takes the selection `queue:retry --all` takes: a
+connection name, `null` for the bound queue, or `false` (the default)
+for every connection, then an optional queue name. It works oldest
+first, stops at the first record of a job that failed after the call
+started, and, given a `$limit` of at least 1, after that many records.
+`retryMany()` returns one result per id, in the order given.
+
+Each `RetryResult` carries the id and a `RetryStatus`, plus the record's
+class and queue when it existed:
+
+- `Retried` — the job is back on its queue and the record is forgotten.
+- `NotFound` — no record has that id.
+- `Failed` — the class no longer exists or no longer accepts the stored
+  arguments, the connection is no longer configured, or the push was
+  refused. The record is kept, `reason` says why, and a batch goes on to
+  the next record.
+
+A result never carries a job argument. A constructor that rejected the
+stored arguments is reported by its exception's class, since its message
+is free to quote the value it rejected.
+
+A failure of the failed-jobs database itself is thrown, not returned —
+including a delete refused after a successful push, when the job is
+already back on its queue and its record remains. The retrier pushes
+before it forgets, so an interruption between the two leaves the record
+too; see [Duplicate records](#duplicate-records).
+
+A named connection's queue is built the first time a record needs it
+and kept for the retrier's lifetime, which is the worker's; it is
+closed when the application scope is disposed.
 
 ## Duplicate records
 

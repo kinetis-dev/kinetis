@@ -25,10 +25,10 @@ use Psr\Container\ContainerInterface;
  * close() runs when the application scope is disposed. A process that
  * never resolves the store opens nothing.
  *
- * FailedJobRecorderInterface resolves through the SqlFailedJobStore
- * binding, so the worker and the commands share one store and one link.
- * An application binding either id in its own bootstrap.php wins over
- * this, since that runs later.
+ * FailedJobRecorderInterface and FailedJobRetrier resolve through the
+ * SqlFailedJobStore binding, so the worker, the commands and application
+ * code share one store and one link. An application binding any of these
+ * ids in its own bootstrap.php wins over this, since that runs later.
  */
 final class PackageBootstrap implements PackageBootstrapInterface
 {
@@ -57,5 +57,12 @@ final class PackageBootstrap implements PackageBootstrapInterface
                 return $container->get(SqlFailedJobStore::class);
             },
         );
+
+        $app->bind(FailedJobRetrier::class, static function (AppScope $app) use ($config): FailedJobRetrier {
+            /** @var SqlFailedJobStore $store */
+            $store = $app->get(SqlFailedJobStore::class);
+
+            return new FailedJobRetrier($store, $app, $config);
+        });
     }
 }

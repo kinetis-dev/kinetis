@@ -66,6 +66,22 @@ The database connection the store uses: the
 `DB_*` keys for `default`, which an unset or blank value selects, and
 `DB_{NAME}_*` for any other name.
 
+## Retrying from code
+
+`Kinetis\QueueFailedJobs\FailedJobRetrier` runs what `queue:retry` runs,
+for application code such as a dashboard. Inject it and call
+`retry($id)`, `retryMany($ids)` or
+`retryMatching($connection, $queue, $limit)`; each returns a
+`RetryResult` per record — `Retried`, `NotFound`, or `Failed` with a
+reason — and never a job argument:
+
+```php
+$result = $retrier->retry('3f9c0b2a64d14e8f9a0c51d7e2b46a18');
+```
+
+What each status means, and which failures are thrown instead, is in
+[Retrying from code](https://kinetis.dev/docs/queue-failed-jobs.html#retrying-from-code).
+
 ## Delivery
 
 A job the worker gives up on is held by the backend, recorded, or both —
