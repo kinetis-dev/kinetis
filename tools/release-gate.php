@@ -349,9 +349,7 @@ function gateMain(array $argv = []): int
     return 0;
 }
 
-// See generate-composer.php for the entry-point guard and the Psalm
-// suppression it carries.
-/** @psalm-suppress ParadoxicalCondition */
+// See generate-composer.php for the entry-point guard.
 if (current(get_included_files()) === __FILE__) {
     exit(gateMain($argv ?? []));
 }

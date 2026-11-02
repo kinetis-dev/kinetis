@@ -45,10 +45,10 @@ generated `composer.json` carries no version field:
   Only that step needs the extension — PHPStan and Psalm read each
   package's own stubs.
 - PHPStan, level 8.
-- Psalm, `--taint-analysis` — data-flow analysis for injection-style
-  bugs (SQL injection, XSS, ...), a different lens than PHPStan's
-  type-correctness checking. Results upload to GitHub's code-scanning
-  tab as SARIF.
+- Psalm, `--taint-analysis` — type checking and, in the same run,
+  data-flow analysis for injection-style bugs (SQL injection, XSS, ...),
+  which PHPStan does not perform. Results upload to GitHub's
+  code-scanning tab as SARIF.
 
 A separate job builds the Sphinx documentation with `-W` (warnings fail
 the build), so a broken docs page can't merge silently.

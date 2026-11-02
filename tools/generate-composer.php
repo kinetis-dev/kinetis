@@ -552,6 +552,7 @@ function planVersionMoves(array $manifest, array $parsed): array
 /**
  * @param array<string, mixed> $manifest
  * @param array{bump: ?string, size: ?string, setVersions: array<string, string>} $parsed
+ * @psalm-cli-only
  */
 function runBump(array $manifest, array $parsed): int
 {
@@ -635,11 +636,7 @@ function generatorMain(array $argv): int
 
 // get_included_files()[0] is the entry-point script whether or not $argv
 // is populated, which realpath($argv[0]) is not: PHPUnit's own CLI
-// invocation leaves $argv unset. Psalm reads get_included_files() as
-// never returning __FILE__ here and reports a ParadoxicalCondition; its
-// model of that function does not match runtime, so the suppression
-// stays.
-/** @psalm-suppress ParadoxicalCondition */
+// invocation leaves $argv unset.
 if (current(get_included_files()) === __FILE__) {
     exit(generatorMain($argv ?? []));
 }

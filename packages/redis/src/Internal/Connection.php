@@ -49,7 +49,6 @@ final class Connection
         $this->replies = $queue->iterate();
 
         EventLoop::queue(static function () use ($socket, $queue): void {
-            /** @psalm-suppress InvalidArgument */
             $parser = new RespParser($queue->push(...));
 
             try {

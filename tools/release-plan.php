@@ -368,6 +368,7 @@ function checkResolution(array $manifest, string $key, array $candidateSet, call
 
 /**
  * @param list<array{key: string, version: string, problems: list<string>}> $plan
+ * @psalm-cli-only
  */
 function printHumanReadable(array $plan): void
 {
@@ -390,6 +391,7 @@ function printHumanReadable(array $plan): void
 
 /**
  * @param list<array{key: string, version: string, problems: list<string>}> $plan
+ * @psalm-cli-only
  */
 function printJson(array $plan): void
 {
@@ -487,9 +489,7 @@ function planMain(array $argv = []): int
     return array_all($plan, static fn (array $entry): bool => $entry['problems'] === []) ? 0 : 1;
 }
 
-// See generate-composer.php for the entry-point guard and the Psalm
-// suppression it carries.
-/** @psalm-suppress ParadoxicalCondition */
+// See generate-composer.php for the entry-point guard.
 if (current(get_included_files()) === __FILE__) {
     exit(planMain($argv ?? []));
 }

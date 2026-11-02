@@ -450,6 +450,13 @@ function publishMain(array $argv = []): int
     $helper = null;
 
     try {
+        /**
+         * The operator names the plan file on the command line of a tool
+         * they run; that path is not an untrusted input. Psalm suppresses a
+         * taint issue only through TaintedInput, for this statement alone.
+         *
+         * @psalm-suppress TaintedInput
+         */
         $json = @file_get_contents($planPath);
 
         if ($json === false || $root === false) {
@@ -500,9 +507,7 @@ function publishMain(array $argv = []): int
     return 0;
 }
 
-// See generate-composer.php for the entry-point guard and the Psalm
-// suppression it carries.
-/** @psalm-suppress ParadoxicalCondition */
+// See generate-composer.php for the entry-point guard.
 if (current(get_included_files()) === __FILE__) {
     exit(publishMain($argv ?? []));
 }
