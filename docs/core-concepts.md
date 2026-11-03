@@ -86,6 +86,17 @@ A deployment that wants one specific adapter instead of detection calls
 `HttpStartup::assemble()` with its own factory and serves from the
 result; see {doc}`runtime-adapters`.
 
+## Discovery happens at build time
+
+You never register a controller, command, listener or global middleware;
+Kinetis finds them by their attributes. That convenience has no
+production cost. `kinetis build` resolves them once, together with each
+route's parameter binding and validation plan, into
+`.kinetis-cache/compiled.php`, and a production boot reads that file
+instead of reflecting the application. A persistent worker reads it once
+for its whole life; PHP-FPM reads it on each request, without scanning
+any source. See {doc}`caching`.
+
 ## The `Kernel` — runtime-agnostic by design
 
 Everything in Kinetis's request-handling path converges on one class:
