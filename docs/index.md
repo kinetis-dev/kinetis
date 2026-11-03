@@ -18,29 +18,34 @@ html[data-theme="dark"] .bd-article section > p > strong:only-child { color: #F5
 
 ## How Kinetis works
 
-**Discovered, not registered.** Controllers, console commands, event
-listeners, global middleware, and MCP tools are found by their
-attributes anywhere under your own namespace. There is no provider
-class, route file, or listener map to keep in step with the code.
+**Discovered, not registered**
 
-**Compiled for production.** Development discovers from source on every
-boot. `kinetis build` compiles the result into one
-`.kinetis-cache/compiled.php` artifact in the deploy step, so a
-production boot reads a file instead of scanning code — see
-{doc}`caching`.
+Controllers, console commands, event listeners, global middleware, and
+MCP tools are found by their attributes anywhere under your own
+namespace. There is no provider class, route file, or listener map to
+keep in step with the code.
 
-**Safe in a long-running process.** Application services come from the
-container, application-scoped or created fresh for each request.
-Configuration is typed and read once at boot. Three bundled PHPStan
-rules flag the mistakes that break a persistent worker: a `static`
-property ({doc}`container`), a call that blocks the event loop
-({doc}`concurrency`), and a reach into superglobals or the SAPI
-({ref}`process-globals`).
+**Compiled for production**
 
-**A small core, opt-in packages.** The framework holds the runtime-neutral
-core. Databases, queues, auth, storage, search, and runtime adapters are
-separate packages you install when you need them, and the framework
-depends on none of them.
+Development discovers from source on every boot. `kinetis build`
+compiles the result into one `.kinetis-cache/compiled.php` artifact in
+the deploy step, so a production boot reads a file instead of scanning
+code. See {doc}`caching`.
+
+**Safe in a long-running process**
+
+Application services come from the container, application-scoped or
+created fresh for each request. Configuration is typed and read once at
+boot. Three bundled PHPStan rules flag the mistakes that break a
+persistent worker: a `static` property ({doc}`container`), a call that
+blocks the event loop ({doc}`concurrency`), and a reach into
+superglobals or the SAPI ({ref}`process-globals`).
+
+**A small core, opt-in packages**
+
+The framework holds the runtime-neutral core. Databases, queues, auth,
+storage, search, and runtime adapters are separate packages you install
+when you need them, and the framework depends on none of them.
 
 ## What you get
 
