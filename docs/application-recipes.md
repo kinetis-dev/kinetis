@@ -21,15 +21,23 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Lifecycle/I-O**: the request DTO and its controller resolve fresh
   from the request scope on every request; nothing about one request's
   input persists past it.
-- **Security/integrity**: validation attributes run before the
-  controller does, so a malformed request never reaches application
-  code — put every constraint on the DTO, not in checks scattered
-  through the controller.
+- **Security/integrity**: the body is decoded and validated before the
+  controller runs, so neither a malformed nor an invalid request reaches
+  application code — put every constraint on the DTO, not in checks
+  scattered through the controller.
+- **Statuses**: the framework fixes these, and no controller or
+  renderer chooses them. A body that is not valid JSON, or not a JSON
+  object, is a `400` with `{"error": "<message>"}`; it is never
+  validated, so it is not a `422`. A nonblank body under an unsupported
+  `Content-Type` is a `415`, and one over `MAX_BODY_SIZE` is a `413`.
+  Only a decoded object that fails the DTO's constraints is the `422`
+  problem document. See {doc}`routing-validation`'s "The request body".
 - **Verification**: a {doc}`testing` `TestClient` request for a valid
   payload and for each violation, asserting the `422` and its violation
-  list.
+  list, and one with a malformed JSON body asserting the `400`.
 - **Non-goal**: hand-written validation duplicating what a constraint
-  attribute already expresses.
+  attribute already expresses, and middleware that rewrites the
+  framework's `400` into a `422`.
 
 ## Constrained or catch-all route
 

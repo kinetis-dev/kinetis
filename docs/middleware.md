@@ -338,7 +338,10 @@ with the generic `500`.
 
 A failed validation reaches `ExceptionHandlerMiddleware` as a
 `ValidationException` and is rendered as the `422` problem document shown
-in {doc}`routing-validation`. To answer differently — a `303` back to an
+in {doc}`routing-validation`. A request body the framework cannot read —
+the `400`, `413` and `415` in {doc}`routing-validation`'s "The request
+body" — is answered before validation and never reaches this renderer.
+To answer differently — a `303` back to an
 HTML form, a re-rendered page — implement
 `Kinetis\Http\ValidationExceptionRendererInterface` and bind it in
 `bootstrap.php`, as [Binding an application
