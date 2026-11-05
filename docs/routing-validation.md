@@ -215,8 +215,10 @@ input](#validating-input) shows. The body is read according to its
   `ServerRequestInterface` parameter and reads the body itself.
   Generic JSON is not placed in `getParsedBody()`: a route that bypasses
   `#[Body]` decodes the staged body stream itself.
-- A JSON body that is not valid JSON, or not an object, is a `400`. An
-  empty body counts as `{}`.
+- A JSON body that is not valid JSON, or not an object, is a `400` with
+  `{"error": "<message>"}`. It is refused before validation, so it is
+  never the `422` problem document and never reaches a
+  `ValidationExceptionRendererInterface`. An empty body counts as `{}`.
 - A body larger than `MAX_BODY_SIZE`, 2 MiB unless you change it, is
   refused with `413` before routing. See [Request body
   limits](middleware.md#request-body-limits).
@@ -316,8 +318,10 @@ The `create()` action at the top of this page binds it with
 
 ### The 422 response
 
-A request that fails validation receives an [RFC 9457][rfc9457] problem
-document, served as `application/problem+json`:
+A request whose input was read but fails validation receives an
+[RFC 9457][rfc9457] problem document, served as
+`application/problem+json`. A body that could not be read at all is the
+`400`, `413` or `415` in [The request body](#the-request-body) instead.
 
 ```{code-block} json
 {
