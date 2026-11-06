@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e40c34e191b6c139147aac23c03b5902",
+    "content-hash": "ce2a4843d860a032bd12336602aa528f",
     "packages": [
         {
             "name": "kinetis/mcp-protocol",

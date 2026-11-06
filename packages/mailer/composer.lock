@@ -1350,13 +1350,13 @@
             "dist": {
                 "type": "path",
                 "url": "../revolt-http-client",
-                "reference": "8d1737617b83d6000055c248fad1ca88f183a0d8"
+                "reference": "2a6dd6ab661d234132fa2969c9ebb7cc75014fd9"
             },
             "require": {
                 "amphp/http-client": "^5.3.6",
                 "php": "^8.4",
                 "revolt/event-loop": "^1.0.9",
-                "symfony/http-client": "^8.1.4",
+                "symfony/http-client": "^8.1.11",
                 "symfony/http-client-contracts": "^3.7.1"
             },
             "require-dev": {
@@ -3474,12 +3474,12 @@
             "version": "v5.6.4",
             "source": {
                 "type": "git",
-                "url": "https://github.com/vlucas/phpdotenv.git",
+                "url": "https://github.com/phpdotenv/phpdotenv.git",
                 "reference": "416df702837983f8d5ff48c9c3fee4f5f57b980b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/416df702837983f8d5ff48c9c3fee4f5f57b980b",
+                "url": "https://api.github.com/repos/phpdotenv/phpdotenv/zipball/416df702837983f8d5ff48c9c3fee4f5f57b980b",
                 "reference": "416df702837983f8d5ff48c9c3fee4f5f57b980b",
                 "shasum": ""
             },

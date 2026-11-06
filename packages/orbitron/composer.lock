@@ -138,12 +138,12 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp-docs",
-                "reference": "382991dd3a0c529deb77942237a92f58ab37265e"
+                "reference": "ba68a39d9d0da06b5a71092c702443fbe4773db0"
             },
             "require": {
                 "kinetis/mcp-protocol": "dev-main",
                 "php": "^8.4",
-                "symfony/http-client": "^8.1.4",
+                "symfony/http-client": "^8.1.11",
                 "symfony/http-client-contracts": "^3.7.1"
             },
             "require-dev": {
@@ -1530,12 +1530,12 @@
             "version": "v5.7.0",
             "source": {
                 "type": "git",
-                "url": "https://github.com/vlucas/phpdotenv.git",
+                "url": "https://github.com/phpdotenv/phpdotenv.git",
                 "reference": "301c07936b16d88628b126b01d082ba153cf4c40"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/301c07936b16d88628b126b01d082ba153cf4c40",
+                "url": "https://api.github.com/repos/phpdotenv/phpdotenv/zipball/301c07936b16d88628b126b01d082ba153cf4c40",
                 "reference": "301c07936b16d88628b126b01d082ba153cf4c40",
                 "shasum": ""
             },

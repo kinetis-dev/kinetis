@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "47d20d258119821b6bf36813538546a9",
+    "content-hash": "c46c0d0f6f2c2db8c1702d09608f6a92",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1208,13 +1208,13 @@
             "dist": {
                 "type": "path",
                 "url": "../revolt-http-client",
-                "reference": "8d1737617b83d6000055c248fad1ca88f183a0d8"
+                "reference": "2a6dd6ab661d234132fa2969c9ebb7cc75014fd9"
             },
             "require": {
                 "amphp/http-client": "^5.3.6",
                 "php": "^8.4",
                 "revolt/event-loop": "^1.0.9",
-                "symfony/http-client": "^8.1.4",
+                "symfony/http-client": "^8.1.11",
                 "symfony/http-client-contracts": "^3.7.1"
             },
             "require-dev": {
@@ -2880,12 +2880,12 @@
             "version": "v5.7.0",
             "source": {
                 "type": "git",
-                "url": "https://github.com/vlucas/phpdotenv.git",
+                "url": "https://github.com/phpdotenv/phpdotenv.git",
                 "reference": "301c07936b16d88628b126b01d082ba153cf4c40"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/301c07936b16d88628b126b01d082ba153cf4c40",
+                "url": "https://api.github.com/repos/phpdotenv/phpdotenv/zipball/301c07936b16d88628b126b01d082ba153cf4c40",
                 "reference": "301c07936b16d88628b126b01d082ba153cf4c40",
                 "shasum": ""
             },
