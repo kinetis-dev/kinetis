@@ -19,7 +19,7 @@ services:
     command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/app/public", "--worker", "/app/public/index.php"]
 
   mysql:
-    image: mysql:8.4
+    image: mysql:9.7
     environment:
       MYSQL_DATABASE: pingpong
       MYSQL_USER: pingpong
@@ -37,7 +37,7 @@ services:
       retries: 20
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
 
   soketi:
     image: quay.io/soketi/soketi:1.4-16-debian

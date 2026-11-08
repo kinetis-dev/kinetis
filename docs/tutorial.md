@@ -480,7 +480,7 @@ services:
         condition: service_started
 
   mysql:
-    image: mysql:8.4
+    image: mysql:9.7
     environment:
       MYSQL_DATABASE: pingpong
       MYSQL_USER: pingpong
@@ -862,7 +862,7 @@ Add Redis and a worker process to run the job:
 :caption: docker-compose.yml (additions)
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
 
   queue-worker:
     build:

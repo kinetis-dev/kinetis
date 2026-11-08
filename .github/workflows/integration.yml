@@ -46,7 +46,7 @@ jobs:
       matrix:
         php-version: ['8.4', '8.5']
         mysql:
-          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MySQL, image: "mysql:9.7", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
           - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
     services:
       mysql:
@@ -62,7 +62,7 @@ jobs:
           --health-cmd="${{ matrix.mysql.healthCmd }}"
           --health-interval=5s --health-timeout=5s --health-retries=10
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: testdb
           POSTGRES_USER: testuser
@@ -119,7 +119,7 @@ jobs:
       matrix:
         php-version: ['8.4', '8.5']
         mysql:
-          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MySQL, image: "mysql:9.7", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
           - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
     services:
       mysql:
@@ -135,7 +135,7 @@ jobs:
           --health-cmd="${{ matrix.mysql.healthCmd }}"
           --health-interval=5s --health-timeout=5s --health-retries=10
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: testdb
           POSTGRES_USER: testuser
@@ -183,7 +183,7 @@ jobs:
         php-version: ['8.4', '8.5']
     services:
       redis:
-        image: redis:7-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -244,7 +244,7 @@ jobs:
       matrix:
         php-version: ['8.4', '8.5']
         mysql:
-          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MySQL, image: "mysql:9.7", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
           - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
     services:
       mysql:
@@ -290,7 +290,7 @@ jobs:
       matrix:
         php-version: ['8.4', '8.5']
         mysql:
-          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MySQL, image: "mysql:9.7", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
           - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
     services:
       mysql:
@@ -306,7 +306,7 @@ jobs:
           --health-cmd="${{ matrix.mysql.healthCmd }}"
           --health-interval=5s --health-timeout=5s --health-retries=10
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: testdb
           POSTGRES_USER: testuser
@@ -401,7 +401,7 @@ jobs:
       matrix:
         php-version: ['8.4', '8.5']
         mysql:
-          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MySQL, image: "mysql:9.7", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
           - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
     services:
       mysql:
@@ -417,7 +417,7 @@ jobs:
           --health-cmd="${{ matrix.mysql.healthCmd }}"
           --health-interval=5s --health-timeout=5s --health-retries=10
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: testdb
           POSTGRES_USER: testuser
@@ -428,7 +428,7 @@ jobs:
           --health-cmd="pg_isready -U testuser"
           --health-interval=5s --health-timeout=5s --health-retries=10
       redis:
-        image: redis:7-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -484,7 +484,7 @@ jobs:
           mkdir -p /tmp/pg-socket && chmod 777 /tmp/pg-socket
           docker run -d --name pg-tls -p 5433:5432 -v /tmp/tls-certs:/certs-src:ro -v /tmp/pg-socket:/var/run/postgresql \
             -e POSTGRES_DB=testdb -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpass \
-            --entrypoint bash postgres:16 -c 'cp /certs-src/server.pem /certs-src/server.key /certs-src/ca.pem /tmp/ && chown postgres /tmp/server.* /tmp/ca.pem && chmod 600 /tmp/server.key && printf "local all all trust\nhostssl all mtlsuser 0.0.0.0/0 scram-sha-256 clientcert=verify-ca\nhost all all 0.0.0.0/0 scram-sha-256\n" > /tmp/pg_hba.conf && chown postgres /tmp/pg_hba.conf && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/ca.pem -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c hba_file=/tmp/pg_hba.conf'
+            --entrypoint bash postgres:18 -c 'cp /certs-src/server.pem /certs-src/server.key /certs-src/ca.pem /tmp/ && chown postgres /tmp/server.* /tmp/ca.pem && chmod 600 /tmp/server.key && printf "local all all trust\nhostssl all mtlsuser 0.0.0.0/0 scram-sha-256 clientcert=verify-ca\nhost all all 0.0.0.0/0 scram-sha-256\n" > /tmp/pg_hba.conf && chown postgres /tmp/pg_hba.conf && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/ca.pem -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c hba_file=/tmp/pg_hba.conf'
           for _ in $(seq 1 40); do
             docker exec mysql-tls ${{ matrix.mysql.name == 'MariaDB' && 'mariadb-admin' || 'mysqladmin' }} ping -h 127.0.0.1 -uroot -proot --silent 2>/dev/null && break
             sleep 2
@@ -599,7 +599,7 @@ jobs:
       matrix:
         php-version: ['8.4', '8.5']
         mysql:
-          - { name: MySQL, image: "mysql:8.4", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
+          - { name: MySQL, image: "mysql:9.7", healthCmd: "mysqladmin ping -h localhost -u root -proot" }
           - { name: MariaDB, image: "mariadb:11.4", healthCmd: "mariadb-admin ping -h localhost -u root -proot" }
     services:
       mysql:
@@ -615,7 +615,7 @@ jobs:
           --health-cmd="${{ matrix.mysql.healthCmd }}"
           --health-interval=5s --health-timeout=5s --health-retries=10
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: testdb
           POSTGRES_USER: testuser
@@ -759,7 +759,7 @@ jobs:
         php-version: ['8.4', '8.5']
     services:
       localstack:
-        image: localstack/localstack:3.0.2
+        image: localstack/localstack:4.14.0
         env:
           SERVICES: sqs,s3
         ports:
@@ -1092,7 +1092,7 @@ jobs:
         sapi: [frankenphp, fpm]
     services:
       mysql:
-        image: mysql:8.4
+        image: mysql:9.7
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: testdb
@@ -1260,7 +1260,7 @@ jobs:
         php-version: ['8.4', '8.5']
     services:
       opensearch:
-        image: opensearchproject/opensearch:2
+        image: opensearchproject/opensearch:3
         env:
           discovery.type: single-node
           DISABLE_SECURITY_PLUGIN: "true"
@@ -1271,7 +1271,7 @@ jobs:
           --health-cmd="curl -sf http://localhost:9200/_cluster/health"
           --health-interval=5s --health-timeout=5s --health-retries=24
       opensearch-secure:
-        image: opensearchproject/opensearch:2
+        image: opensearchproject/opensearch:3
         env:
           discovery.type: single-node
           OPENSEARCH_INITIAL_ADMIN_PASSWORD: Kinetis-CI-Verify-2026!

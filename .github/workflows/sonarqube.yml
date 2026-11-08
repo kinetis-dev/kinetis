@@ -46,7 +46,7 @@ jobs:
     # uncovered.
     services:
       mysql:
-        image: mysql:8.4
+        image: mysql:9.7
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: testdb
@@ -58,7 +58,7 @@ jobs:
           --health-cmd="mysqladmin ping -h localhost -u root -proot"
           --health-interval=5s --health-timeout=5s --health-retries=10
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: testdb
           POSTGRES_USER: testuser
@@ -84,7 +84,7 @@ jobs:
         # Docker network to follow the redirect at all.
         run: |
           docker network create kinetis-redis
-          docker run -d --name kinetis-redis --network kinetis-redis redis:7-alpine
+          docker run -d --name kinetis-redis --network kinetis-redis redis:8-alpine
           docker run -d --name kinetis-redis-cluster --network kinetis-redis grokzen/redis-cluster:7.0.10
           # grokzen's entrypoint first creates six independent masters and
           # only then attaches three of them as replicas, so cluster_state:ok
