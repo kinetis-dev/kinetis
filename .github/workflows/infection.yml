@@ -56,7 +56,16 @@ jobs:
         # discipline) — their thresholds reflect that scope honestly
         # rather than being padded to look stronger than they are.
         package:
-          - { name: core, dir: packages/framework, minMsi: 75, minCoveredMsi: 75 }
+          # The framework is split into shards along its top-level src/
+          # directories; the Infection step maps each directory to exactly
+          # one shard. Measured MSI per shard: http 80.6%, validation
+          # 90.3%, testing 80.3%, cache 80.5%, kernel 84.0%; each floor sits
+          # at least 5 points below.
+          - { name: core-http, dir: packages/framework, shard: http, minMsi: 75, minCoveredMsi: 75 }
+          - { name: core-validation, dir: packages/framework, shard: validation, minMsi: 85, minCoveredMsi: 85 }
+          - { name: core-testing, dir: packages/framework, shard: testing, minMsi: 75, minCoveredMsi: 75 }
+          - { name: core-cache, dir: packages/framework, shard: cache, minMsi: 75, minCoveredMsi: 75 }
+          - { name: core-kernel, dir: packages/framework, shard: kernel, minMsi: 75, minCoveredMsi: 75 }
           - { name: persistence, dir: packages/persistence, minMsi: 75, minCoveredMsi: 75, needsSockets: true }
           # A provisional floor: this package's Infection job has not
           # run yet, so 60 is a starting point rather than a measurement.
@@ -178,25 +187,58 @@ jobs:
         run: docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e COMPOSER_AUTH -v "$PWD":/app -v "${{ runner.temp }}/composer-cache":/tmp/cache -w /app/${{ matrix.package.dir }} composer:2 install --no-interaction --prefer-dist ${{ matrix.package.composerFlags }}
 
       - name: Infection (mutation testing)
-        # A pull request skips a package whose own src/ is unchanged
-        # relative to the base branch unless this workflow changed.
-        # Every selected package is mutated in full. The thresholds below
-        # are measured against a whole package's mutant set and say
-        # nothing about a subset selected from a diff, where a handful
-        # of mutants decides the score. The two-dot diff against the
-        # base tip is exact here because the PR checkout is the merge
-        # commit of the PR onto that tip. Every push to main runs the
-        # same full suite.
+        # A pull request skips a package, or a framework shard, whose own
+        # source is unchanged relative to the base branch unless this
+        # workflow changed. Every selected package or shard is mutated in
+        # full. The thresholds above are measured against that whole
+        # mutant set and say nothing about a subset selected from a diff,
+        # where a handful of mutants decides the score. The two-dot diff
+        # against the base tip is exact here because the PR checkout is
+        # the merge commit of the PR onto that tip. Every push to main
+        # runs the same full suite.
         env:
           BASE_REF: ${{ github.base_ref }}
+          PACKAGE_DIR: ${{ matrix.package.dir }}
+          SHARD: ${{ matrix.package.shard }}
         run: |
+          # Infection's positional paths limit which sources a shard
+          # mutates; the initial PHPUnit run still covers the whole suite.
+          # Every top-level src/ entry belongs to exactly one shard, and an
+          # unassigned entry fails every shard until it is added here.
+          sources="$PACKAGE_DIR/src"
+          paths=
+          if [ -n "$SHARD" ]; then
+            sources=
+            for entry in "$PACKAGE_DIR"/src/*; do
+              name=${entry##*/}
+              case "$name" in
+                Http) owner=http ;;
+                Validation) owner=validation ;;
+                Testing|Runtime) owner=testing ;;
+                Cache|SimpleCache) owner=cache ;;
+                Async|Config|Console|Container|Events|Instrumentation|Linting|Logging|OpenApi|Reflection|Security) owner=kernel ;;
+                *) echo "::error::$entry is not assigned to an Infection shard in infection.yml."; exit 1 ;;
+              esac
+              if [ "$owner" = "$SHARD" ]; then
+                sources="$sources $entry/"
+                paths="$paths src/$name/"
+              fi
+            done
+            if [ -z "$paths" ]; then
+              echo "::error::Infection shard $SHARD selects no source directory."
+              exit 1
+            fi
+          fi
           if [ -n "$BASE_REF" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_REF"
-            if ! git diff --diff-filter=AM --name-only "origin/$BASE_REF" -- '${{ matrix.package.dir }}/src' '.github/workflows/infection.yml' | grep -q .; then
-              echo "No changed source files under ${{ matrix.package.dir }}/src — skipping this package."
+            # $sources is a word list of paths without spaces.
+            # shellcheck disable=SC2086
+            if ! git diff --diff-filter=AM --name-only "origin/$BASE_REF" -- $sources '.github/workflows/infection.yml' | grep -q .; then
+              echo "No changed source files under ${sources# } — skipping."
               exit 0
             fi
           fi
+          echo "Mutating ${sources# }."
           # pcov is installed via PIE (the PHP Foundation's official
           # successor to PECL, distributed as a standalone .phar, pinned
           # to an exact release like every other version in this project)
@@ -242,5 +284,5 @@ jobs:
             curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 --output /usr/local/bin/pie.phar https://github.com/php/pie/releases/download/1.4.10/pie.phar || exit 1
             chmod +x /usr/local/bin/pie.phar
             php /usr/local/bin/pie.phar install pecl/pcov -n --auto-install-build-tools --auto-install-system-dependencies
-            php -d memory_limit=1024M vendor/bin/infection --initial-tests-php-options='-d error_log=/dev/null -d memory_limit=1024M' --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4 ${{ matrix.package.infectionFlags }}
+            php -d memory_limit=1024M vendor/bin/infection --initial-tests-php-options='-d error_log=/dev/null -d memory_limit=1024M' --min-msi=${{ matrix.package.minMsi }} --min-covered-msi=${{ matrix.package.minCoveredMsi }} --threads=4 ${{ matrix.package.infectionFlags }} $paths
           "

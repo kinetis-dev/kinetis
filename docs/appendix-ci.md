@@ -324,7 +324,12 @@ incrementing a constant, ...) and re-runs the covering tests per
 mutant — a mutant the suite doesn't catch ("escaped") is a gap in
 assertion rigor, not just a coverage gap.
 
-One matrix job per package carrying its own `infection.json5`.
+One matrix job per package carrying its own `infection.json5`. The
+framework (`core`) is split into `core-*` shards along its top-level
+`src/` directories: the Infection step maps every top-level `src/` entry
+to exactly one shard, and an unassigned entry fails every shard. Each
+shard runs the framework's whole PHPUnit suite for coverage and mutates
+only its own directories.
 `kinetis/pingpong` has none — it is a demo application, read as example
 code rather than called as an API — and `tools/` is the monorepo's own
 tooling rather than a published package. Each job runs
@@ -338,8 +343,9 @@ suites carry above. Runs on PHP
 
 On a pull request, a package whose own `src/` is unchanged relative to
 the base branch skips its job, and every package the PR does change is
-mutated in full. The thresholds are measured against a whole package
-and are only meaningful against a whole package's mutant set, so a
+mutated in full. A framework shard applies the same rule to its own
+directories. The thresholds are measured against a whole package's, or
+a whole shard's, mutant set and are only meaningful against it, so a
 changed-lines subset is never scored against them. Every push to `main`
 runs the same full suite.
 
@@ -356,7 +362,11 @@ above the number here by design:
 | `bref-adapter` | 70% |
 | `broadcasting` | 75% |
 | `cache-redis` | 75% |
-| `core` | 75% |
+| `core-cache` | 75% |
+| `core-http` | 75% |
+| `core-kernel` | 75% |
+| `core-testing` | 75% |
+| `core-validation` | 85% |
 | `database-bridge` | 60% |
 | `mailer` | 90% |
 | `mcp` | 75% |
