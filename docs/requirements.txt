@@ -4,6 +4,6 @@ sphinx-copybutton>=0.5
 sphinx-design>=0.6
 sphinxext-opengraph>=0.9
 sphinx-sitemap>=2.6
-kinetis-website-theme @ https://github.com/kinetis-dev/kinetis-website-theme/releases/download/v0.7.0/kinetis_website_theme-0.7.0-py3-none-any.whl
+kinetis-website-theme @ https://github.com/kinetis-dev/kinetis-website-theme/releases/download/v0.7.1/kinetis_website_theme-0.7.1-py3-none-any.whl
 pagefind[extended]==1.6.0
 pagefind-bin-extended==1.6.0
