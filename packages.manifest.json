@@ -687,7 +687,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, mapped entities and a request-scoped unit of work over kinetis/orm, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.4.7",
+            "version": "1.4.8",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",
@@ -743,7 +743,7 @@
             "description": "OpenTelemetry tracing for Kinetis — request spans, framework instrumentation hooks, decorators for the cache, session, HTTP and search boundaries, and OTLP export over the Revolt-backed client.",
             "namespace": "Kinetis\\Telemetry\\",
             "testNamespace": "Kinetis\\Telemetry\\Tests\\",
-            "version": "1.6.4",
+            "version": "1.6.5",
             "requires": [
                 "framework",
                 "revolt-http-client"

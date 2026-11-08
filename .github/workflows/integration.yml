@@ -961,7 +961,7 @@ jobs:
                 -v "$PWD/packages/framework/tests/Runtime/Conformance/Fixtures/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro \
                 -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
                 -e TRUSTED_PROXIES="$CONFORMANCE_TRUSTED_PROXIES" \
-                dunglas/frankenphp:1.13.2-php8.5.12 \
+                dunglas/frankenphp:1.13.5-php8.5.12 \
                 frankenphp php-server --listen :8080 --root "$FIXTURES" --worker "$FIXTURES/index.php"
               ;;
             fpm)
@@ -1121,7 +1121,7 @@ jobs:
           case "${{ matrix.sapi }}" in
             frankenphp)
               docker run -d --name php --network-alias sapi "${PHP_ARGS[@]}" \
-                --entrypoint sh dunglas/frankenphp:1.13.2-php8.5.12 \
+                --entrypoint sh dunglas/frankenphp:1.13.5-php8.5.12 \
                 -c "install-php-extensions mysqli pdo_mysql && exec frankenphp php-server --listen :8080 --root $FIXTURE --worker $FIXTURE/index.php,1"
               ;;
             fpm)
@@ -1175,9 +1175,9 @@ jobs:
         # leg pins the client to the server it runs against, which is
         # also the pairing the package documents.
         include:
-          - { php-version: '8.4', elasticsearch: '9', image: '9.5.3', client: '^9.0' }
-          - { php-version: '8.5', elasticsearch: '9', image: '9.5.3', client: '^9.0' }
-          - { php-version: '8.4', elasticsearch: '8', image: '8.19.21', client: '^8.19' }
+          - { php-version: '8.4', elasticsearch: '9', image: '9.5.6', client: '^9.0' }
+          - { php-version: '8.5', elasticsearch: '9', image: '9.5.6', client: '^9.0' }
+          - { php-version: '8.4', elasticsearch: '8', image: '8.19.24', client: '^8.19' }
     services:
       elasticsearch:
         image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.image }}
