@@ -215,7 +215,7 @@ a mistyped `needs:` only shows up once it runs on `main`. Pin the linter
 version, so a new release cannot change the verdict under you:
 
 ```sh
-docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7 -color
+docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color
 ```
 
 It embeds shellcheck for every `run:` block across every workflow, so a

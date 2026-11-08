@@ -64,7 +64,7 @@ enable_post_data_reading=0
 ```{code-block} bash
 docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
     -v "$PWD/docker/kinetis.ini":/usr/local/etc/php/conf.d/zz-kinetis.ini:ro \
-    dunglas/frankenphp:1.13.2-php8.5.12 \
+    dunglas/frankenphp:1.13.5-php8.5.12 \
     frankenphp php-server --listen :8080 --root /app/public --worker /app/public/index.php
 ```
 
