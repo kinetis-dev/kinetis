@@ -10,10 +10,11 @@ use Psr\Log\LogLevel;
 use RuntimeException;
 
 /**
- * The logger bound by default in development, so an exception leaves a
- * trail with no logging setup at all. Output is captured by pointing
- * error_log() at a file for the duration of each test — asserting on
- * what was actually written, rather than that the call did not throw.
+ * The logger bound by default in every environment, so an exception
+ * leaves a trail with no logging setup at all. Output is captured by
+ * pointing error_log() at a file for the duration of each test —
+ * asserting on what was actually written, rather than that the call did
+ * not throw.
  */
 final class ErrorLogLoggerTest extends TestCase
 {

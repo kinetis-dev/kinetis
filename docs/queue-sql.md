@@ -180,8 +180,8 @@ connection: `vendor/bin/kinetis queue:work --connection=ledger`.
 
 - **Set a retry cap.** `QUEUE_MAX_ATTEMPTS` defaults to `0`, so a relay
   job that fails once, because the downstream backend is down, is given
-  up on, and the default `NullLogger` records nothing. Pass `maxAttempts`
-  to `pushOn()`, and keep the final failure: install
+  up on, leaving only a line from the default `error_log()` logger.
+  Pass `maxAttempts` to `pushOn()`, and keep the final failure: install
   {doc}`queue-failed-jobs` to record it for retry, or make it visible
   with a durable logger or a `JobFailedPermanently` listener — see {doc}`queue`'s
   [Retries and failures](queue.md#retries-and-failures).

@@ -6,7 +6,7 @@ namespace Kinetis\Broadcasting;
 
 /**
  * Always succeeds, delivers nothing — the sensible default nobody has to
- * opt into, the same role `NullSimpleCache`/`NullLogger` play in core. A
+ * opt into, the same role `NullSimpleCache` plays in core. A
  * missed broadcast degrades a live UI update, not a security guarantee,
  * so this stays silent rather than throwing the way an unconfigured rate
  * limiter or revocation store would: {@see PackageBootstrap} binds this

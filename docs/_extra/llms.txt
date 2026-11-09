@@ -62,7 +62,7 @@ tutorial, then read whichever section you have reached.
 
 ## Observability
 
-- [Logging](https://kinetis.dev/docs/logging.html): PSR-3 logging: the default NullLogger, and where Kinetis logs on its own.
+- [Logging](https://kinetis.dev/docs/logging.html): PSR-3 logging: the default error_log() logger, and where Kinetis logs on its own.
 - [Telemetry](https://kinetis.dev/docs/telemetry.html): kinetis/telemetry: OpenTelemetry tracing — request spans, SQL/queue decorators, a traced HTTP transport, OTLP export over the Revolt-backed client.
 
 ## Integrations

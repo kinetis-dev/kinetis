@@ -68,8 +68,7 @@ the detected environment (`APP_ENV`, defaulting to production);
 `Kinetis\Instrumentation\TelemetryInterface` → the process-wide
 `Telemetry::global()` holder, so app code can constructor-inject it too
 (see {doc}`appendix`); `Psr\Log\LoggerInterface` → an `error_log()`-backed
-logger in development, `Psr\Log\NullLogger` in production (see
-{doc}`logging`); `Kinetis\Config\Config` →
+logger in every environment (see {doc}`logging`); `Kinetis\Config\Config` →
 `Config::fromEnvironment()` (see {doc}`config`);
 `Kinetis\Http\Form\FormLimits` and `Kinetis\Http\TrustedProxies` → both
 built from that `Config`, standing in for an entry point that registered

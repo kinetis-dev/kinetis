@@ -18,8 +18,8 @@ use PHPUnit\Framework\TestCase;
  * which is all the project class scan needs to find a
  * command — no real `composer install` required), a bootstrap.php
  * binding a custom logger that writes to a known file (so the
- * subprocess's own log calls are observable after it exits, since the
- * default NullLogger would otherwise discard them silently), a fixture
+ * subprocess's own log calls are observable as structured entries after
+ * it exits, apart from anything it writes to STDERR), a fixture
  * command, and the two small Composer bin-proxy glue files
  * (vendor/autoload.php, vendor/bin/kinetis) that make
  * Kinetis\Runtime\ProjectRoot::detect() resolve the temp directory as
@@ -58,9 +58,8 @@ final class BinKinetisDisposalTest extends TestCase
 
         // Binds a logger that writes one JSON line per call to a file
         // named by the DISPOSAL_TEST_LOG_FILE env var — the only way to
-        // observe a subprocess's own logging after it has exited. The
-        // default NullLogger AppScope::boot() would otherwise bind
-        // discards everything silently.
+        // observe a subprocess's own logging as structured entries after
+        // it has exited.
         file_put_contents($this->projectDir . '/bootstrap.php', <<<'PHP'
             <?php
 
@@ -452,6 +451,45 @@ final class BinKinetisDisposalTest extends TestCase
         );
 
         self::assertSame(70, $result['exitCode'], 'EX_SOFTWARE must still be reported even though nothing could be logged about why');
+    }
+
+    /**
+     * A `bootstrap: false` command never runs bootstrap.php, so the
+     * application's logger is never bound and its failure reaches
+     * AppScope::boot()'s default logger — which, in production too, must
+     * put the failure on STDERR rather than exit 1 with no output.
+     */
+    public function test_a_failing_bootstrap_free_command_in_production_reports_on_stderr(): void
+    {
+        $this->writeCommand('FailingBootstrapFreeCommand.php', <<<'PHP'
+            <?php
+
+            declare(strict_types=1);
+
+            namespace App;
+
+            use Kinetis\Console\Attributes\Command;
+            use RuntimeException;
+
+            final readonly class FailingBootstrapFreeCommand
+            {
+                #[Command(name: 'fails-without-bootstrap', bootstrap: false)]
+                public function run(): never
+                {
+                    throw new RuntimeException('the migration failed');
+                }
+            }
+            PHP);
+
+        $logFile = $this->projectDir . '/log.jsonl';
+        $result = $this->runBinKinetis('fails-without-bootstrap', $logFile, ['APP_ENV' => 'production']);
+
+        self::assertSame(1, $result['exitCode'], $result['stderr']);
+        self::assertStringContainsString(
+            '[error] Command "fails-without-bootstrap" failed: the migration failed [RuntimeException at ',
+            $result['stderr'],
+        );
+        self::assertSame([], $this->readLog($logFile), 'bootstrap.php never ran, so its logger was never bound');
     }
 
     /**

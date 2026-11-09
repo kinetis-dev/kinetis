@@ -19,15 +19,31 @@ $app->boot();
 Register it before `boot()`, the same discipline as every other
 `AppScope` binding — see {doc}`container`.
 
-If you never register one, `AppScope::boot()` binds a default that
-depends on the environment: in development
-(`APP_ENV=development`), `Kinetis\Logging\ErrorLogLogger`, a minimal
-PSR-3 logger writing through `error_log()` — so an exception during
-local development always leaves a trail in the server log with zero
-setup; in production, `Psr\Log\NullLogger`, which silently discards
-everything. Framework internals resolve `LoggerInterface` through the
-container, so something is always bound by the time they run, and your
-own registration wins in both environments.
+If you never register one, `AppScope::boot()` binds
+`Kinetis\Logging\ErrorLogLogger` in every environment: a minimal PSR-3
+logger writing one line per entry through PHP's `error_log()`, so a
+failure leaves a trail with zero setup. Framework internals resolve
+`LoggerInterface` through the container, so something is always bound by
+the time they run, and your own registration wins in every environment.
+
+Where `error_log()` writes depends on the SAPI and the `error_log` ini
+setting:
+
+- **Command line** — `bin/kinetis` commands, queue workers, and
+  persistent-worker servers write to stderr, unless `error_log` names a
+  file (or `syslog`), in which case they write there instead.
+- **PHP-FPM** — FPM's own error log, unless `error_log` names a
+  destination of its own.
+
+The same applies to console commands declared with `bootstrap: false`,
+such as `migrate` and `build`: they skip your bootstrap, so a failure
+they throw reaches this default logger, not one you registered there.
+
+`ErrorLogLogger` interpolates context values and appends the exception's
+class and `file:line`, so each line carries the full exception message —
+a failed migration's SQL error included. Bind your own logger if your
+messages can carry data that must be redacted before it reaches that
+log.
 
 ## Where Kinetis logs, and why
 

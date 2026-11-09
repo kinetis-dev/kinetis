@@ -210,8 +210,8 @@ every `Kernel` rather than offered as an option.
 ### Logging is best-effort
 
 An uncaught exception is logged through the bound
-`Psr\Log\LoggerInterface` — in development an `error_log()`-backed logger
-by default, so the trail exists where the response body is not visible.
+`Psr\Log\LoggerInterface` — an `error_log()`-backed logger by default,
+so the trail exists where the response body is not visible.
 A registered logger that itself throws cannot prevent the `500`, and an
 exception message that is not valid UTF-8 still produces a valid JSON
 body: observability never defeats this boundary.

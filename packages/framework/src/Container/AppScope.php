@@ -24,7 +24,6 @@ use Closure;
 use Psr\Container\ContainerInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Log\LoggerInterface;
-use Psr\Log\NullLogger;
 use Psr\SimpleCache\CacheInterface;
 use Throwable;
 
@@ -144,9 +143,9 @@ final class AppScope implements ContainerInterface
      *
      * - `AppEnvironment` → `AppEnvironment::detect()`.
      * - `TelemetryInterface` → `Telemetry::global()`.
-     * - `LoggerInterface` → `NullLogger` in production, `ErrorLogLogger`
-     *   outside it. ExceptionHandlerMiddleware, TransactionGuard, and
-     *   McpServer all resolve LoggerInterface through the container.
+     * - `LoggerInterface` → `ErrorLogLogger` in every environment.
+     *   ExceptionHandlerMiddleware, TransactionGuard, and McpServer all
+     *   resolve LoggerInterface through the container.
      * - `Config` → `Config::fromEnvironment()` (see Kinetis\Config) —
      *   populated from `.env` already if Kinetis\Config\EnvFile::safeLoad()
      *   ran first. Kinetis\Runtime\HttpStartup and bin/kinetis both bind
@@ -195,18 +194,11 @@ final class AppScope implements ContainerInterface
             $this->instance(TelemetryInterface::class, Telemetry::global());
         }
 
-        /** @var AppEnvironment $environment */
-        $environment = $this->get(AppEnvironment::class);
-
-        // Development gets a real trail by default — an exception during
-        // local development lands in the SAPI's error log with zero
-        // logging setup. Production keeps the silent default; a
-        // consumer-registered logger wins in both.
+        // Every environment gets a real trail by default: a failure reported
+        // only through the logger — a `bootstrap: false` command's error in
+        // bin/kinetis included — still reaches the SAPI's error log.
         if (!$this->has(LoggerInterface::class)) {
-            $this->instance(
-                LoggerInterface::class,
-                $environment->isProduction() ? new NullLogger() : new ErrorLogLogger(),
-            );
+            $this->instance(LoggerInterface::class, new ErrorLogLogger());
         }
 
         if (!$this->has(Config::class)) {

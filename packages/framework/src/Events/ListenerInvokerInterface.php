@@ -11,7 +11,7 @@ use Kinetis\Container\RequestScope;
  * of being called directly. Core owns this interface and provides
  * SynchronousListenerInvoker as the default (AppScope::boot() registers
  * it automatically, the same "sensible default nobody has to opt into"
- * pattern as LoggerInterface -> NullLogger); a satellite package can
+ * pattern as CacheInterface -> NullSimpleCache); a satellite package can
  * implement it to actually defer invocation (kinetis/queue's
  * QueuedListenerInvoker, for one) without core ever depending on that
  * package — the dependency runs satellite-to-core only.

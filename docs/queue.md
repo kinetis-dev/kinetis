@@ -319,8 +319,8 @@ is logged with them:
 Install {doc}`queue-failed-jobs` to keep every job given up on in a
 table, with commands to list, retry, forget and prune the records; the
 worker records the job before the backend deletes it. Without it, that
-log entry is the only persistent record, and the production default
-`NullLogger` discards it unless the application binds a durable logger
+log entry is the only record, and the default logger writes it to
+stderr or PHP's error log unless the application binds a durable logger
 ({doc}`logging`). `QueueWorker` dispatches
 `Kinetis\Queue\Events\JobFailedPermanently` once the backend has deleted
 the job, with the same redacted data and the failed-job record's id, so
