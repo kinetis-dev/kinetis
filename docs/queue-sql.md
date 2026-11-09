@@ -248,6 +248,25 @@ while every worker is busy. Retries follow {doc}`queue`: `maxAttempts`,
 retry moves the row's own `available_at`, so it waits exactly as a
 delayed push does and needs no schema change.
 
+## Stored times
+
+`available_at`, `reserved_at` and `created_at` hold UTC wall-clock times
+(`Y-m-d H:i:s`, no offset) taken from the worker's clock, whatever PHP's
+`date.timezone`. Workers configured with different time zones therefore
+agree on what is due or expired, and a daylight-saving change in PHP's
+zone moves no cutoff. Postgres's `TIMESTAMP` stores the values as
+written. MySQL's `TIMESTAMP` interprets them in the connection's session
+`time_zone`; in the default strict SQL mode it rejects a value that
+falls in that zone's skipped daylight-saving hour. Run the queue's
+MySQL connection with a session time zone that has no daylight saving,
+such as UTC.
+
+Releases up to 1.6.8 wrote these columns in PHP's own time zone. An
+application upgrading from one with a non-UTC `date.timezone` sees the
+times of rows already in the table shift once by that zone's offset: a
+delayed job becomes due earlier or later by the offset, and a reserved
+job can be reclaimed early. Drain the queue, or deploy while it is idle.
+
 ## Named connections
 
 ```{code-block} text
