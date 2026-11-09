@@ -59,6 +59,10 @@ html_static_path = ["_static"]
 # site-root /llms.txt belongs to kinetis-website.
 html_extra_path = ["_extra"]
 html_css_files = ["custom.css"]
+# No _sources/*.md.txt copies: search engines index them as duplicate
+# pages, and a plain-text file cannot carry a noindex tag.
+html_copy_source = False
+html_show_sourcelink = False
 # No logo or favicon is set here: the theme supplies the navbar logo and
 # the links to kinetis-website's own /assets/favicon.* files.
 html_title = "Kinetis"
