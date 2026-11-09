@@ -159,10 +159,11 @@ default connection's Postgres application name. A `default` directory is
 refused, because the default connection's migrations are the files in
 `migrations/` itself. A directory breaking these rules stops the command
 with an error naming it, rather than leaving a misspelt connection's
-database unmigrated. `--connection` and `MIGRATE_CONNECTION_NAME` values
-follow the same rules, except that `default` selects the default
-connection. The commands check every name before they read any database
-configuration. A named connection without its `DB_{NAME}_CONNECTION` key
+database unmigrated. Hidden directories, whose names start with `.`, are
+ignored, since no connection can have such a name. `--connection` and
+`MIGRATE_CONNECTION_NAME` values follow the same rules, except that
+`default` selects the default connection. The commands check every name
+before they read any database configuration. A named connection without its `DB_{NAME}_CONNECTION` key
 fails naming that exact key, such as `DB_REPORTING_CONNECTION`.
 
 ### Which connections a command covers
