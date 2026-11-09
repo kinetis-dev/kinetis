@@ -78,6 +78,32 @@ A worker keeps `public/index.php`, including route discovery, loaded
 across requests, so a code change needs a container restart. Use PHP-FPM
 while editing code constantly.
 
+### Command-line services on the same image
+
+The `dunglas/frankenphp` image declares a `HEALTHCHECK` that requests
+`http://localhost:2019/metrics`, the admin endpoint of a running
+FrankenPHP server. A container built from that image that runs
+`migrate`, `queue:work` or a scheduled command instead never answers it,
+so Docker reports the container `unhealthy`. A `service_healthy`
+dependency on it never starts, and an orchestrator that replaces
+unhealthy containers restarts a working queue worker. Disable the
+inherited check on every service that does not run the server:
+
+```{code-block} yaml
+:caption: docker-compose.yml
+
+  queue-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["php", "vendor/bin/kinetis", "queue:work"]
+    healthcheck:
+      disable: true
+```
+
+`kinetis/pingpong`'s `docker-compose.yml` does this for its `migrate`,
+`queue-worker` and `cron` services.
+
 ### Sizing FrankenPHP's worker threads
 
 Each worker thread processes one HTTP request at a time, start to
