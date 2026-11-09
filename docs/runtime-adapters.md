@@ -70,7 +70,9 @@ docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
 
 `enable_post_data_reading=0` is required: without it PHP consumes and
 truncates the body before Kinetis runs, and the adapter refuses to serve.
-`kinetis/pingpong`'s image uses this command and ships the same file.
+`kinetis/pingpong`'s image uses this command and ships the same file,
+which also turns PHP's error display off so a diagnostic reaches the
+container log rather than the response body.
 
 A worker keeps `public/index.php`, including route discovery, loaded
 across requests, so a code change needs a container restart. Use PHP-FPM
