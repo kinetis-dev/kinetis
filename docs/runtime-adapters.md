@@ -108,6 +108,24 @@ starts roughly 2× the CPU cores.
   every database-touching route (a 20-query fan-out by ~10%, single-query
   routes by ~9%) with no loss on CPU-pure routes.
 
+When every thread is busy, a new request waits for one, and by default
+it waits without limit. Set `max_wait_time` in the global `frankenphp`
+block so an overloaded server answers `503 Service Unavailable` instead
+of growing an unbounded queue:
+
+```{code-block}
+:caption: Caddyfile
+
+{
+    frankenphp {
+        max_wait_time 5s
+    }
+}
+```
+
+Pick a value below the client's or load balancer's timeout, so the
+client gets a fast, retryable 503 rather than a timeout.
+
 Every thread runs `bootstrap.php` and the package bootstraps, so each
 builds its own database pool. Keep threads × `DB_MAX_CONNECTIONS` under
 the database's connection limit — see {doc}`persistence`'s "Sizing
