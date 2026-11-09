@@ -254,12 +254,24 @@ delayed push does and needs no schema change.
 (`Y-m-d H:i:s`, no offset) taken from the worker's clock, whatever PHP's
 `date.timezone`. Workers configured with different time zones therefore
 agree on what is due or expired, and a daylight-saving change in PHP's
-zone moves no cutoff. Postgres's `TIMESTAMP` stores the values as
-written. MySQL's `TIMESTAMP` interprets them in the connection's session
-`time_zone`; in the default strict SQL mode it rejects a value that
-falls in that zone's skipped daylight-saving hour. Run the queue's
-MySQL connection with a session time zone that has no daylight saving,
-such as UTC.
+zone moves no cutoff. The migration stubs use `DATETIME` on MySQL and
+`TIMESTAMP` (without time zone) on Postgres; both store the values as
+written. MySQL's own `TIMESTAMP` type would interpret them in the
+connection's session `time_zone` and, in the default strict SQL mode,
+reject a value that falls in that zone's skipped daylight-saving hour.
+
+Tables created from a stub released before 1.6.9 have MySQL `TIMESTAMP`
+columns. They keep working while the connection's session time zone has
+no daylight saving, such as UTC. Otherwise convert them. MySQL converts
+each value in the session time zone of the `ALTER`, so run it with the
+time zone the queue's connection uses:
+
+```{code-block} sql
+ALTER TABLE kinetis_queue_jobs
+    MODIFY available_at DATETIME NOT NULL,
+    MODIFY reserved_at DATETIME NULL,
+    MODIFY created_at DATETIME NOT NULL;
+```
 
 Releases up to 1.6.8 wrote these columns in PHP's own time zone. An
 application upgrading from one with a non-UTC `date.timezone` sees the
