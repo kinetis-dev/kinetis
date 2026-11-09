@@ -37,7 +37,8 @@ is the one key this package adds.
 
 ## Create the table
 
-`kinetis/queue-sql` ships one {doc}`migrations` stub per dialect:
+`kinetis/queue-sql` ships one {doc}`migrations` stub per dialect for the
+`kinetis_queue_jobs` table:
 
 ```{code-block} text
 vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.mysql.php.stub

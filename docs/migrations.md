@@ -93,18 +93,20 @@ DB_PASSWORD=secret
 ```
 
 For example, a PostgreSQL image whose request path uses native `ext-pgsql`
-needs both clients because migrations use PDO:
+needs both clients because migrations use PDO, plus `sockets`, which the
+native Postgres driver requires (see {doc}`persistence`):
 
 ```{code-block} dockerfile
-RUN docker-php-ext-install pgsql pdo_pgsql
+RUN docker-php-ext-install pgsql pdo_pgsql sockets
 ```
 
-Its application manifest declares both platform requirements:
+Its application manifest declares the platform requirements:
 
 ```{code-block} json
 "require": {
     "ext-pdo_pgsql": "*",
-    "ext-pgsql": "*"
+    "ext-pgsql": "*",
+    "ext-sockets": "*"
 }
 ```
 

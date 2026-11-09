@@ -519,6 +519,14 @@ completion — `app` now waits for it, with its own `entrypoint` cleared so
 it doesn't also try to install into the same shared `vendor` volume at
 the same time.
 
+The MySQL healthcheck probes TCP because the image's init phase answers
+on a socket first. The official `postgres` image does the same: its init
+phase runs a temporary server with `listen_addresses=''`, so a bare
+`pg_isready` succeeds on the Unix socket and releases dependents just
+before that server stops. For PostgreSQL use
+`test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "<user>"]`, which
+succeeds only once the real server listens on TCP.
+
 ```{code-block} bash
 docker compose up --build
 ```
