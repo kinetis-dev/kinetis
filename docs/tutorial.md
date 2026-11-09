@@ -63,7 +63,7 @@ Add a PSR-4 mapping for your own code to `composer.json`:
 
 {
     "require": {
-        "kinetis/framework": "^1.0"
+        "kinetis/framework": "^1.25.0"
     },
     "autoload": {
         "psr-4": {

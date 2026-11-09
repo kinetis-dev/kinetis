@@ -111,7 +111,7 @@ rm -f composer.lock
 cat > composer.json <<"JSON"
 {
     "require": {
-        "kinetis/mcp-docs": "^1.0"
+        "kinetis/mcp-docs": "^1.9.5"
     }
 }
 JSON
