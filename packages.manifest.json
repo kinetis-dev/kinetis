@@ -245,7 +245,7 @@
             "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations for the default connection and named ones, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.4.4",
+            "version": "1.4.5",
             "requires": [
                 "framework",
                 "persistence",
@@ -375,7 +375,7 @@
             "description": "A SQL-backed (MySQL/Postgres) queue implementation for kinetis/queue's QueueInterface — SELECT ... FOR UPDATE SKIP LOCKED for atomic reservation, token-fenced settlement, and a finite visibility timeout that redelivers a crashed worker's job.",
             "namespace": "Kinetis\\QueueSql\\",
             "testNamespace": "Kinetis\\QueueSql\\Tests\\",
-            "version": "1.6.9",
+            "version": "1.6.10",
             "requires": [
                 "framework",
                 "queue",

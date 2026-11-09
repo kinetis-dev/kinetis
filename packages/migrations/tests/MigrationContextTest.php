@@ -139,6 +139,14 @@ final class MigrationContextTest extends TestCase
         self::assertSame("{$this->migrations}/b10", $this->partitions()['b10']);
     }
 
+    public function test_hidden_directories_are_not_connections(): void
+    {
+        \mkdir("{$this->migrations}/.claude", recursive: true);
+        \mkdir("{$this->migrations}/reporting", recursive: true);
+
+        self::assertSame(['default', 'reporting'], \array_keys($this->partitions()));
+    }
+
     /**
      * @param array<string, string|true> $options
      * @param array<string, string> $config

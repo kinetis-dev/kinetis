@@ -150,9 +150,10 @@ final readonly class MigrationContext
     }
 
     /**
-     * Every direct child directory is a connection partition; one whose
-     * name no connection can have is refused rather than skipped, since
-     * skipping it would leave that database unmigrated.
+     * Every visible direct child directory is a connection partition; one
+     * whose name no connection can have is refused rather than skipped,
+     * since skipping it would leave that database unmigrated. A hidden
+     * directory can never be a connection, so skipping it loses nothing.
      *
      * @return list<string>
      */
@@ -167,7 +168,7 @@ final readonly class MigrationContext
         $names = [];
 
         foreach ($entries as $entry) {
-            if ($entry === '.' || $entry === '..' || !is_dir("{$this->migrationsPath}/{$entry}")) {
+            if (str_starts_with($entry, '.') || !is_dir("{$this->migrationsPath}/{$entry}")) {
                 continue;
             }
 
