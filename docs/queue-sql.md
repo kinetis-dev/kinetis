@@ -260,6 +260,13 @@ written. MySQL's own `TIMESTAMP` type would interpret them in the
 connection's session `time_zone` and, in the default strict SQL mode,
 reject a value that falls in that zone's skipped daylight-saving hour.
 
+`SqlQueue` compares these columns only with cutoffs it computes in PHP.
+Hand-written SQL that compares them with `NOW()` or `CURRENT_TIMESTAMP`
+is correct only while the connection's session time zone is UTC, because
+both functions return the session's local time. Compare with
+`UTC_TIMESTAMP()` on MySQL and `NOW() AT TIME ZONE 'UTC'` on Postgres,
+which are correct in any session time zone.
+
 Tables created from a stub released before 1.6.9 have MySQL `TIMESTAMP`
 columns. They keep working while the connection's session time zone has
 no daylight saving, such as UTC. Otherwise convert them. MySQL converts
