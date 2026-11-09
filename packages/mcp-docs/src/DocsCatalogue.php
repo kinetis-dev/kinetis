@@ -60,7 +60,7 @@ final class DocsCatalogue
             new DocsPage('views', 'Views', 'Engine-neutral rendering with pure PHP, Latte, or Twig, including asset URLs and compiled-template cache lifecycle'),
             new DocsPage('performance-tuning', 'Performance tuning', 'Capacity tuning: the worker-threads x maxConnections budget, what to observe under load, and tuning by workload shape'),
             new DocsPage('benchmarks', 'Benchmarks', 'Benchmark results against other PHP frameworks: what was tested and what came out'),
-            new DocsPage('logging', 'Logging', 'PSR-3 logging: the default NullLogger, and where Kinetis logs on its own'),
+            new DocsPage('logging', 'Logging', 'PSR-3 logging: the default error_log() logger, and where Kinetis logs on its own'),
             new DocsPage('telemetry', 'Telemetry', 'Configure OTLP tracing, wire outgoing clients and keep sensitive inputs out of spans'),
             new DocsPage('storage', 'Storage', 'Configure file storage, validate uploads and choose local disk or S3'),
             new DocsPage('storage-s3', 'Storage (S3)', 'kinetis/storage-s3: Amazon S3 (and S3-compatible) storage for kinetis/storage, over the Revolt-native transport in kinetis/revolt-http-client'),

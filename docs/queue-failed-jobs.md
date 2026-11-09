@@ -21,7 +21,8 @@ failed-jobs database: it stops when that database refuses a write.
 
 ## Create the table
 
-The package ships one {doc}`migrations` stub per dialect:
+The package ships one {doc}`migrations` stub per dialect for the
+`kinetis_failed_jobs` table:
 
 ```{code-block} text
 vendor/kinetis/queue-failed-jobs/resources/migrations/create_kinetis_failed_jobs_table.mysql.php.stub

@@ -8,12 +8,12 @@ use DateInterval;
 use Psr\SimpleCache\CacheInterface;
 
 /**
- * The default CacheInterface binding when Redis isn't configured — the same
- * "sensible default nobody has to opt into" pattern as LoggerInterface's
- * NullLogger. Always misses, never actually stores anything, so a feature
- * built against CacheInterface (a rate limiter, ...) degrades to "not
- * enforced" rather than throwing a NotFoundException the first time
- * something tries to resolve the interface.
+ * The default CacheInterface binding when Redis isn't configured — a
+ * sensible default nobody has to opt into. Always misses, never actually
+ * stores anything, so a feature built against CacheInterface (a rate
+ * limiter, ...) degrades to "not enforced" rather than throwing a
+ * NotFoundException the first time something tries to resolve the
+ * interface.
  */
 final class NullSimpleCache implements CacheInterface
 {

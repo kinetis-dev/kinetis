@@ -288,22 +288,36 @@ final class AppScopeTest extends TestCase
         $app->middleware(GlobalMiddleware::class);
     }
 
-    public function test_boot_registers_a_null_logger_by_default(): void
+    #[DataProvider('environments')]
+    public function test_boot_defaults_the_logger_to_error_log_in_every_environment(AppEnvironment $environment): void
     {
         $app = new AppScope();
+        $app->instance(AppEnvironment::class, $environment);
         $app->boot();
 
-        self::assertInstanceOf(NullLogger::class, $app->get(LoggerInterface::class));
+        self::assertInstanceOf(ErrorLogLogger::class, $app->get(LoggerInterface::class));
     }
 
-    public function test_boot_does_not_override_a_consumer_registered_logger(): void
+    #[DataProvider('environments')]
+    public function test_a_consumer_registered_logger_wins_over_the_default(AppEnvironment $environment): void
     {
         $app = new AppScope();
         $logger = new NullLogger();
+        $app->instance(AppEnvironment::class, $environment);
         $app->instance(LoggerInterface::class, $logger);
         $app->boot();
 
         self::assertSame($logger, $app->get(LoggerInterface::class));
+    }
+
+    /**
+     * @return iterable<string, array{AppEnvironment}>
+     */
+    public static function environments(): iterable
+    {
+        foreach (AppEnvironment::cases() as $environment) {
+            yield $environment->value => [$environment];
+        }
     }
 
     public function test_boot_registers_the_detected_app_environment(): void
@@ -312,26 +326,6 @@ final class AppScopeTest extends TestCase
         $app->boot();
 
         self::assertInstanceOf(AppEnvironment::class, $app->get(AppEnvironment::class));
-    }
-
-    public function test_boot_defaults_the_logger_to_error_log_in_development(): void
-    {
-        $app = new AppScope();
-        $app->instance(AppEnvironment::class, AppEnvironment::Development);
-        $app->boot();
-
-        self::assertInstanceOf(ErrorLogLogger::class, $app->get(LoggerInterface::class));
-    }
-
-    public function test_a_consumer_registered_logger_wins_over_the_development_default(): void
-    {
-        $app = new AppScope();
-        $logger = new NullLogger();
-        $app->instance(AppEnvironment::class, AppEnvironment::Development);
-        $app->instance(LoggerInterface::class, $logger);
-        $app->boot();
-
-        self::assertSame($logger, $app->get(LoggerInterface::class));
     }
 
     public function test_boot_registers_a_config_snapshot_by_default(): void

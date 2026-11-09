@@ -37,7 +37,8 @@ is the one key this package adds.
 
 ## Create the table
 
-`kinetis/queue-sql` ships one {doc}`migrations` stub per dialect:
+`kinetis/queue-sql` ships one {doc}`migrations` stub per dialect for the
+`kinetis_queue_jobs` table:
 
 ```{code-block} text
 vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.mysql.php.stub
@@ -180,8 +181,8 @@ connection: `vendor/bin/kinetis queue:work --connection=ledger`.
 
 - **Set a retry cap.** `QUEUE_MAX_ATTEMPTS` defaults to `0`, so a relay
   job that fails once, because the downstream backend is down, is given
-  up on, and the default `NullLogger` records nothing. Pass `maxAttempts`
-  to `pushOn()`, and keep the final failure: install
+  up on, leaving only a line from the default `error_log()` logger.
+  Pass `maxAttempts` to `pushOn()`, and keep the final failure: install
   {doc}`queue-failed-jobs` to record it for retry, or make it visible
   with a durable logger or a `JobFailedPermanently` listener — see {doc}`queue`'s
   [Retries and failures](queue.md#retries-and-failures).
@@ -246,6 +247,37 @@ while every worker is busy. Retries follow {doc}`queue`: `maxAttempts`,
 `QUEUE_MAX_ATTEMPTS` and `QUEUE_RETRY_BASE_DELAY_SECONDS`. A delayed
 retry moves the row's own `available_at`, so it waits exactly as a
 delayed push does and needs no schema change.
+
+## Stored times
+
+`available_at`, `reserved_at` and `created_at` hold UTC wall-clock times
+(`Y-m-d H:i:s`, no offset) taken from the worker's clock, whatever PHP's
+`date.timezone`. Workers configured with different time zones therefore
+agree on what is due or expired, and a daylight-saving change in PHP's
+zone moves no cutoff. The migration stubs use `DATETIME` on MySQL and
+`TIMESTAMP` (without time zone) on Postgres; both store the values as
+written. MySQL's own `TIMESTAMP` type would interpret them in the
+connection's session `time_zone` and, in the default strict SQL mode,
+reject a value that falls in that zone's skipped daylight-saving hour.
+
+Tables created from a stub released before 1.6.9 have MySQL `TIMESTAMP`
+columns. They keep working while the connection's session time zone has
+no daylight saving, such as UTC. Otherwise convert them. MySQL converts
+each value in the session time zone of the `ALTER`, so run it with the
+time zone the queue's connection uses:
+
+```{code-block} sql
+ALTER TABLE kinetis_queue_jobs
+    MODIFY available_at DATETIME NOT NULL,
+    MODIFY reserved_at DATETIME NULL,
+    MODIFY created_at DATETIME NOT NULL;
+```
+
+Releases up to 1.6.8 wrote these columns in PHP's own time zone. An
+application upgrading from one with a non-UTC `date.timezone` sees the
+times of rows already in the table shift once by that zone's offset: a
+delayed job becomes due earlier or later by the offset, and a reserved
+job can be reclaimed early. Drain the queue, or deploy while it is idle.
 
 ## Named connections
 

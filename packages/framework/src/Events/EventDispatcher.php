@@ -31,7 +31,7 @@ use Psr\EventDispatcher\StoppableEventInterface;
  * (`$app->instance(EventListenerRegistry::class, $registry)`, the same
  * shape as `$app->instance(MysqlConnectionPool::class, ...)`), and
  * $listenerInvoker because AppScope::boot() always registers a default
- * for it, the same as LoggerInterface -> NullLogger.
+ * for it, the same as CacheInterface -> NullSimpleCache.
  */
 final readonly class EventDispatcher implements EventDispatcherInterface
 {

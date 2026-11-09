@@ -139,11 +139,15 @@ lock, whatever `DB_DRIVER` says. Install the matching PDO driver as well:
 needs that PDO extension for migrations.
 
 For example, a PostgreSQL image whose request path uses native `ext-pgsql`
-needs both extensions:
+needs both extensions, plus `sockets`, which the native Postgres driver
+requires (see the `kinetis/persistence` README):
 
 ```dockerfile
-RUN docker-php-ext-install pgsql pdo_pgsql
+RUN docker-php-ext-install pgsql pdo_pgsql sockets
 ```
+
+Its application manifest declares `ext-pdo_pgsql`, `ext-pgsql`, and
+`ext-sockets`.
 
 Full documentation:
 [kinetis.dev/docs/migrations.html](https://kinetis.dev/docs/migrations.html).

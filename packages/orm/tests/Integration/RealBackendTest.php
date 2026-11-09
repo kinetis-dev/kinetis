@@ -1008,15 +1008,19 @@ final class RealBackendTest extends TestCase
         self::assertSame([IndexDocument::class . ' ' . json_encode(['documentId' => 'caught'])], self::queuedJobs($other));
     }
 
-    /** A SqlQueue on $link over a fresh `kinetis_queue_jobs` table with the columns its INSERT writes. */
+    /**
+     * A SqlQueue on $link over a fresh `kinetis_queue_jobs` table with the columns its INSERT writes,
+     * the time columns typed as queue-sql's migration stubs type them.
+     */
     private static function queue(MysqlLink|PostgresLink $link, string $dialect): SqlQueue
     {
+        $time = $dialect === 'mysql' ? 'DATETIME' : 'TIMESTAMP';
         $link->execute('DROP TABLE IF EXISTS kinetis_queue_jobs');
         $link->execute(
             'CREATE TABLE kinetis_queue_jobs (id ' . ($dialect === 'mysql' ? 'BIGINT AUTO_INCREMENT' : 'BIGSERIAL')
             . ' PRIMARY KEY, class VARCHAR(255) NOT NULL, queue VARCHAR(255) NOT NULL, args TEXT NOT NULL, '
-            . 'available_at TIMESTAMP NOT NULL, reserved_at TIMESTAMP NULL, reserved_token VARCHAR(32) NULL, '
-            . 'attempts INT NOT NULL, max_attempts INT NULL, metadata TEXT NULL, created_at TIMESTAMP NOT NULL)',
+            . "available_at {$time} NOT NULL, reserved_at {$time} NULL, reserved_token VARCHAR(32) NULL, "
+            . "attempts INT NOT NULL, max_attempts INT NULL, metadata TEXT NULL, created_at {$time} NOT NULL)",
         );
 
         return new SqlQueue($link);

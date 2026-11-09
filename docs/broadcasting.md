@@ -369,7 +369,7 @@ BROADCAST_ALLOWED_ORIGINS=https://app.example
 
 `BROADCAST_DRIVER` defaults to `null` — `Kinetis\Broadcasting\NullBroadcaster`,
 a silent no-op, the same "sensible default nobody has to opt into"
-pattern `LoggerInterface` → `NullLogger` already establishes. Setting it
+pattern `CacheInterface` → `NullSimpleCache` already establishes. Setting it
 to `pusher` additionally requires `BROADCAST_APP_ID`/`BROADCAST_KEY`/
 `BROADCAST_SECRET` — validated and the driver built at worker boot, not
 lazily, so a misconfiguration fails before the first request rather than

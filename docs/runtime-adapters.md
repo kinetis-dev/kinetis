@@ -70,7 +70,9 @@ docker run --rm -p 8080:8080 -v "$PWD":/app -w /app \
 
 `enable_post_data_reading=0` is required: without it PHP consumes and
 truncates the body before Kinetis runs, and the adapter refuses to serve.
-`kinetis/pingpong`'s image uses this command and ships the same file.
+`kinetis/pingpong`'s image uses this command. Its `docker/kinetis.ini`
+carries this setting and also turns PHP's error display off, so a
+diagnostic reaches the container log rather than the response body.
 
 A worker keeps `public/index.php`, including route discovery, loaded
 across requests, so a code change needs a container restart. Use PHP-FPM
@@ -82,18 +84,22 @@ Each worker thread processes one HTTP request at a time, start to
 finish. `concurrently()` overlaps work *inside* one request; a thread
 suspended on a database response is still not free to take a second
 request. Cross-request concurrency is the thread count. Set it with a
-Caddyfile `worker` block:
+`worker` block in the Caddyfile's global `frankenphp` block:
 
 ```{code-block}
 :caption: Caddyfile
 
-worker {
-    file public/index.php
-    num 20
+{
+    frankenphp {
+        worker {
+            file public/index.php
+            num 20
+        }
+    }
 }
 ```
 
-or the shorthand `worker public/index.php 20`. Left unset, FrankenPHP
+or the shorthand `worker public/index.php 20` in the same place. Left unset, FrankenPHP
 starts roughly 2× the CPU cores.
 
 - **Requests dominated by waiting** — slow queries, remote APIs — want
@@ -105,6 +111,24 @@ starts roughly 2× the CPU cores.
   host against a sub-millisecond database, 20 threads outperform 8 on
   every database-touching route (a 20-query fan-out by ~10%, single-query
   routes by ~9%) with no loss on CPU-pure routes.
+
+When every thread is busy, a new request waits for one, and by default
+it waits without limit. Set `max_wait_time` in the same `frankenphp`
+block so an overloaded server answers `503 Service Unavailable` instead
+of growing an unbounded queue:
+
+```{code-block}
+:caption: Caddyfile
+
+{
+    frankenphp {
+        max_wait_time 5s
+    }
+}
+```
+
+Pick a value below the client's or load balancer's timeout, so the
+client gets a fast, retryable 503 rather than a timeout.
 
 Every thread runs `bootstrap.php` and the package bootstraps, so each
 builds its own database pool. Keep threads × `DB_MAX_CONNECTIONS` under
