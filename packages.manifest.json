@@ -449,7 +449,7 @@
             "description": "A Fiber-native non-blocking Amazon SQS backend for kinetis/queue's QueueInterface.",
             "namespace": "Kinetis\\QueueSqs\\",
             "testNamespace": "Kinetis\\QueueSqs\\Tests\\",
-            "version": "1.5.4",
+            "version": "1.5.5",
             "requires": [
                 "framework",
                 "queue",
