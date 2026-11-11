@@ -28,7 +28,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.26.0",
+            "version": "1.27.0",
             "bin": [
                 "bin/kinetis"
             ],

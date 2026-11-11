@@ -9,6 +9,10 @@ use Kinetis\Cache\DiscoveryContext;
 use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
+use Kinetis\Console\CommandDiscovery;
+use Kinetis\Console\CommandRegistry;
+use Kinetis\Console\CommandRunner;
+use Kinetis\Console\Output;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerDiscovery;
 use Kinetis\Http\Kernel;
@@ -17,6 +21,8 @@ use Kinetis\Http\Routing\RouteDiscovery;
 use Kinetis\Http\Routing\Router;
 use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\Runtime\AppEnvironment;
+use InvalidArgumentException;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -28,7 +34,8 @@ use Throwable;
  * than approximating it — a test that passes against a hand-assembled
  * Kernel proves less than one that passes against the wiring production
  * actually uses. Discovery runs live (never the compiled cache), so a
- * route or listener added mid-test-run is picked up without a build step.
+ * route, listener or command added mid-test-run is picked up without a
+ * build step.
  *
  * Framework-agnostic on purpose: nothing here depends on PHPUnit, so it
  * works from any test runner, a script, or a REPL.
@@ -48,6 +55,7 @@ final class TestApplication
         public readonly AppScope $app,
         public readonly Kernel $kernel,
         public readonly Config $config,
+        private readonly CommandRegistry $commands,
     ) {}
 
     /**
@@ -97,6 +105,7 @@ final class TestApplication
             $router = RouteDiscovery::discover($context, globalMiddleware: $middleware['global']);
             $listeners = EventListenerDiscovery::discover($context);
             $pluginInstances = PluginDiscovery::reconstruct(PluginDiscovery::discover($context));
+            $commands = CommandDiscovery::discover($context);
 
             // The plugin instances and the discovered EventListenerRegistry
             // both have to be bound before the bootstrap chain runs — see
@@ -137,7 +146,7 @@ final class TestApplication
             middlewareGroups: $middleware['groups'],
         );
 
-        return new self($app, $kernel, $config);
+        return new self($app, $kernel, $config, $commands);
     }
 
     /**
@@ -156,12 +165,65 @@ final class TestApplication
         /** @var Config $config */
         $config = $app->get(Config::class);
 
-        return new self($app, new Kernel($app, OpenApiAccess::fromConfig($config)->routes($router)), $config);
+        return new self($app, new Kernel($app, OpenApiAccess::fromConfig($config)->routes($router)), $config, new CommandRegistry());
     }
 
     public function client(): TestClient
     {
         return $this->client ??= new TestClient($this->kernel);
+    }
+
+    /**
+     * Runs a discovered command by name through the same runner
+     * bin/kinetis uses: a fresh request scope with the Output bound, the
+     * command resolved from that scope, a throwable logged and reported
+     * as CommandFailed with exit code 1, and the scope disposed (70 when
+     * only that disposal fails). Stdout and stderr are captured
+     * separately, without colour. The throwable is returned on the
+     * result, not rethrown.
+     *
+     * The application stays booted across calls; dispose() still ends
+     * it. A #[Command(bootstrap: false)] command runs against this
+     * already-booted application rather than an unbootstrapped one. A
+     * command that loops until signalled, such as queue:work, never
+     * returns here.
+     *
+     * @param list<string> $arguments what follows the command name on the command line
+     * @throws InvalidArgumentException when no discovered command has this name
+     */
+    public function command(string $name, array $arguments = []): CommandResult
+    {
+        $definition = $this->commands->findCommand($name)
+            ?? throw new InvalidArgumentException("No discovered command is named \"{$name}\".");
+
+        $stdout = fopen('php://memory', 'w+');
+        $stderr = fopen('php://memory', 'w+');
+
+        if ($stdout === false || $stderr === false) {
+            throw new RuntimeException('Could not open in-memory streams to capture command output.');
+        }
+
+        try {
+            $exitCode = new CommandRunner($this->app)->run(
+                $definition,
+                $arguments,
+                new Output($stdout, $stderr, false, false),
+                $failure,
+            );
+
+            rewind($stdout);
+            rewind($stderr);
+
+            return new CommandResult(
+                $exitCode,
+                (string) stream_get_contents($stdout),
+                (string) stream_get_contents($stderr),
+                $failure,
+            );
+        } finally {
+            fclose($stdout);
+            fclose($stderr);
+        }
     }
 
     /**
