@@ -303,7 +303,7 @@
   },
   "mailer.html": {
    "canonical": "https://kinetis.dev/docs/mailer.html",
-   "description": "Mail sending via Symfony\\Component\\Mailer. A single DSN selects the transport — SMTP, or any of Symfony’s own API-based bridges (Sendgrid, Mailgun, Postmark, SES, …). Configuring: Or, using an API-...",
+   "description": "Mail sending via Symfony\\Component\\Mailer. A single DSN selects the transport — SMTP, or any of Symfony’s own API-based bridges (Sendgrid, Mailgun, Postmark, SES, …). The sender is set on each mess...",
    "og:image": "https://kinetis.dev/docs/_static/og-image.png",
    "og:url": "https://kinetis.dev/docs/mailer.html",
    "title": "Mailer - Kinetis"
