@@ -301,8 +301,8 @@ selector unset leaves core's inline default in place (see {doc}`events`).
 | `QUEUE_RABBITMQ_URL` | *(required for rabbitmq)* | `amqp://` URI. |
 | `QUEUE_RABBITMQ_QUEUE_PREFIX` | — | Queue-name prefix. |
 
-AWS credentials are never read from `Config` — the SQS (and S3) clients
-use AWS's own default credential provider chain.
+AWS credentials for SQS are never read from `Config` — the client uses
+AWS's own default credential provider chain.
 
 ### Failed jobs (`kinetis/queue-failed-jobs`)
 
@@ -344,6 +344,8 @@ directly, bypasses that gate — it reads the key scoped and falls back to
 | `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint (MinIO) — one origin, addressed path-style. |
 | `FILESYSTEM_S3_PLAINTEXT` | `false` | Allow an `http://` endpoint. |
 | `FILESYSTEM_S3_TIMEOUT` | `60` | Seconds per S3 request — connect, idle and transfer. Must be positive. |
+| `FILESYSTEM_S3_ACCESS_KEY_ID` | — | Static access key used for this connection instead of the AWS credential chain. Set together with `FILESYSTEM_S3_SECRET_ACCESS_KEY`; one alone is refused. |
+| `FILESYSTEM_S3_SECRET_ACCESS_KEY` | — | Secret for `FILESYSTEM_S3_ACCESS_KEY_ID`. |
 
 ### Mail (`kinetis/mailer`) — scoped
 
