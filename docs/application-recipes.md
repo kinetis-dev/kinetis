@@ -301,6 +301,259 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Non-goal**: treating a local or single-process run as proof of a
   managed platform's own process lifecycle guarantees.
 
+(recipes-coordination)=
+
+## Coordinating work across processes
+
+Each case below uses a store or process model the application already
+runs. None holds a lock, transaction or connection while it waits.
+
+(recipes-pacing)=
+
+### Pacing a host
+
+A `RequestPacer` given to `Http::withPacer()` spaces every attempt to one
+origin across all worker processes; {ref}`http-client-pacing` states how
+the client applies it. Each recipe below reserves a slot with one atomic
+compare-and-advance on a shared row or key:
+
+- `next_at = max(next_at, now) + interval`, returning the wait
+  `max(0, old_next_at - now)`;
+- when that wait exceeds `$maxWaitSeconds`, nothing is reserved and
+  `reserve()` returns `null`.
+
+`now` is the database or Redis server's clock, so processes on different
+hosts agree on it. A limit of N requests per window is
+`interval = window / N`. Build one pacer per paced origin and interval,
+and register the client on `AppScope`:
+
+```{code-block} php
+:caption: bootstrap.php
+
+use App\Http\PostgresPacer;
+use App\Shipping\CarrierApi;
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\RevoltHttpClient\Http;
+
+return static function (AppScope $app, Config $config): void {
+    $app->instance(CarrierApi::class, new CarrierApi(
+        new Http()
+            ->withBaseUrl('https://api.carrier.example/v2')
+            ->withToken($config->required('CARRIER_API_TOKEN'))
+            ->withRetries(3)
+            // At most 30 requests a minute, across every process.
+            ->withPacer(new PostgresPacer($app->get(PostgresLink::class), intervalSeconds: 2.0)),
+    ));
+};
+```
+
+The SQL pacers run on the injected link outside any transaction. Send a
+paced request outside a transaction the caller holds on that link: a
+PDO link, and a native link from the Fiber holding the transaction,
+refuse client-level statements while it is open ({doc}`persistence`'s
+"Transactions").
+
+**PostgreSQL.** One statement inserts or advances the row. Its `WHERE`
+leaves a slot that is too far away untouched, and then no row comes
+back:
+
+```{code-block} sql
+CREATE TABLE request_pacing (
+    origin  text PRIMARY KEY,
+    next_at double precision NOT NULL -- Unix time of the next free slot
+);
+```
+
+```{code-block} php
+namespace App\Http;
+
+use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\RevoltHttpClient\RequestPacer;
+
+final readonly class PostgresPacer implements RequestPacer
+{
+    public function __construct(private PostgresLink $db, private float $intervalSeconds) {}
+
+    public function reserve(string $origin, float $maxWaitSeconds): ?float
+    {
+        $row = $this->db->execute(
+            <<<'SQL'
+                INSERT INTO request_pacing AS p (origin, next_at)
+                VALUES (?, extract(epoch FROM clock_timestamp()) + ?)
+                ON CONFLICT (origin) DO UPDATE
+                    SET next_at = greatest(p.next_at, extract(epoch FROM clock_timestamp())) + ?
+                    WHERE p.next_at - extract(epoch FROM clock_timestamp()) <= ?
+                RETURNING greatest(0, p.next_at - ? - extract(epoch FROM clock_timestamp())) AS wait
+                SQL,
+            [$origin, $this->intervalSeconds, $this->intervalSeconds, $maxWaitSeconds, $this->intervalSeconds],
+        )->fetchRow();
+
+        return $row === null ? null : (float) $row['wait'];
+    }
+}
+```
+
+**MySQL.** Without `RETURNING`, a short transaction locks the row,
+computes the wait, advances the row and commits before `reserve()`
+returns, so nothing stays locked while the client waits:
+
+```{code-block} sql
+CREATE TABLE request_pacing (
+    origin  VARCHAR(255) PRIMARY KEY,
+    next_at DOUBLE NOT NULL -- Unix time of the next free slot
+);
+```
+
+```{code-block} php
+namespace App\Http;
+
+use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\RevoltHttpClient\RequestPacer;
+use Throwable;
+
+final readonly class MysqlPacer implements RequestPacer
+{
+    public function __construct(private MysqlLink $db, private float $intervalSeconds) {}
+
+    public function reserve(string $origin, float $maxWaitSeconds): ?float
+    {
+        $tx = $this->db->beginTransaction();
+
+        try {
+            $tx->execute(
+                'INSERT INTO request_pacing (origin, next_at) VALUES (?, 0) ON DUPLICATE KEY UPDATE next_at = next_at',
+                [$origin],
+            );
+            $row = $tx->execute(
+                "SELECT next_at, TIMESTAMPDIFF(MICROSECOND, '1970-01-01', UTC_TIMESTAMP(6)) / 1e6 AS now
+                   FROM request_pacing WHERE origin = ? FOR UPDATE",
+                [$origin],
+            )->fetchRow();
+            $nextAt = (float) $row['next_at'];
+            $now = (float) $row['now'];
+            $wait = max(0.0, $nextAt - $now);
+
+            if ($wait > $maxWaitSeconds) {
+                $tx->rollback();
+
+                return null;
+            }
+
+            $tx->execute(
+                'UPDATE request_pacing SET next_at = ? WHERE origin = ?',
+                [max($nextAt, $now) + $this->intervalSeconds, $origin],
+            );
+            $tx->commit();
+
+            return $wait;
+        } catch (Throwable $e) {
+            $tx->rollback();
+
+            throw $e;
+        }
+    }
+}
+```
+
+The clock is read after the row lock is held and in UTC, so neither
+waiting for the lock nor the session time zone skews it.
+
+**Redis.** One Lua script reads the server's `TIME`, so the decision and
+the write are one atomic step. The key expires when its slot passes:
+
+```{code-block} php
+namespace App\Http;
+
+use Kinetis\Redis\Client;
+use Kinetis\RevoltHttpClient\RequestPacer;
+
+final readonly class RedisPacer implements RequestPacer
+{
+    private const string RESERVE = <<<'LUA'
+        local time = redis.call('TIME')
+        local now = tonumber(time[1]) + tonumber(time[2]) / 1000000
+        local slot = math.max(tonumber(redis.call('GET', KEYS[1]) or 0), now)
+        if slot - now > tonumber(ARGV[2]) then
+            return false
+        end
+        local nextAt = slot + tonumber(ARGV[1])
+        redis.call('SET', KEYS[1], string.format('%.6f', nextAt), 'PX', math.ceil((nextAt - now) * 1000))
+        return string.format('%.6f', slot - now)
+        LUA;
+
+    public function __construct(private Client $redis, private float $intervalSeconds) {}
+
+    public function reserve(string $origin, float $maxWaitSeconds): ?float
+    {
+        $key = "request-pacing:{$origin}";
+        $wait = $this->redis->script($key, self::RESERVE, [$key], [$this->intervalSeconds, $maxWaitSeconds]);
+
+        return $wait === null ? null : (float) $wait;
+    }
+}
+```
+
+{ref}`redis-reference-client` registers the `Client`. Never run the
+script again after `Kinetis\Redis\Exception\OutcomeUnknown`: it may
+already have taken the slot. Let the exception propagate from
+`reserve()`; the client passes it to the caller unchanged.
+
+### Unique jobs
+
+To keep at most one job per key queued or running, insert a claim row
+under a unique key and push the job in the same transaction with
+`kinetis/queue-sql`'s `SqlQueue::pushOn()` ({doc}`queue-sql`'s
+"Enqueueing inside a transaction"). A second push for the same key fails
+on the unique key and rolls back with its job:
+
+```{code-block} sql
+CREATE TABLE job_claims (claim_key VARCHAR(191) PRIMARY KEY);
+```
+
+```{code-block} php
+use Kinetis\Persistence\Contract\SqlTransaction;
+use Kinetis\Persistence\Exception\QueryException;
+
+try {
+    $this->transactions->transaction($this->db, function (SqlTransaction $tx) use ($customerId): void {
+        $tx->execute('INSERT INTO job_claims (claim_key) VALUES (?)', ["sync-customer:{$customerId}"]);
+        $this->queue->pushOn($tx, new SyncCustomer($customerId));
+    });
+} catch (QueryException $e) {
+    if (!$e->isUniqueViolation()) {
+        throw $e;
+    }
+    // Already queued or running.
+}
+```
+
+The job deletes its claim when it finishes, in whichever attempt that
+is: `DELETE FROM job_claims WHERE claim_key = ?` at the end of
+`handle()`, in the same transaction as its effect where it has one. A
+job that fails permanently keeps its claim until the application
+deletes it, for example from a `JobFailedPermanently` listener
+({doc}`events`). On any other backend the claim and the push cannot be
+one atomic step: a push that fails, or whose outcome is unknown, after
+the claim committed leaves a claim with no job behind it.
+
+### At most N concurrent jobs of a type
+
+A worker runs one job at a time. Push the type to a queue of its own and
+run N workers whose `--queue` lists it; no other worker lists it
+({doc}`queue`'s "Prioritize with named queues"):
+
+```{code-block} sh
+vendor/bin/kinetis queue:work --queue=exports
+```
+
+### Migrations
+
+The `migrate` commands already serialize across processes:
+`MigrationRunner` holds a session-scoped advisory lock for the whole run
+({doc}`migrations`).
+
 ## See also
 
 - {doc}`agent-workflow` — establishing installed versions and routing a

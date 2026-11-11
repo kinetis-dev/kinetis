@@ -657,7 +657,7 @@ final class SessionKernelTest extends TestCase
 
     public function test_a_cookie_name_that_cannot_be_sent_verbatim_is_refused(): void
     {
-        foreach (['sid session', "sid\r\nX-Injected: 1", 'sid;Path=/evil', ''] as $name) {
+        foreach (['sid session', "sid\r\nX-Injected: 1", 'sid;Path=/evil'] as $name) {
             $response = $this->clientWith(['SESSION_COOKIE' => $name, 'APP_ENV' => 'development'])
                 ->get('/remember/dark');
 
@@ -707,13 +707,24 @@ final class SessionKernelTest extends TestCase
 
     public function test_an_unrecognised_same_site_value_is_refused(): void
     {
-        foreach (['Invalid', 'Lax;Domain=evil.com', ''] as $value) {
+        foreach (['Invalid', 'Lax;Domain=evil.com'] as $value) {
             $response = $this->clientWith(['SESSION_SAMESITE' => $value, 'APP_ENV' => 'development'])
                 ->get('/remember/dark');
 
             $response->assertStatus(500);
             self::assertStringContainsString('SESSION_SAMESITE', (string) $response->getBody(), var_export($value, true));
         }
+    }
+
+    public function test_an_empty_cookie_name_or_same_site_value_uses_the_default(): void
+    {
+        $response = $this->clientWith(['SESSION_COOKIE' => '', 'SESSION_SAMESITE' => '', 'APP_ENV' => 'development'])
+            ->get('/remember/dark');
+
+        $response->assertOk();
+        $setCookie = $response->getHeaderLine('Set-Cookie');
+        self::assertMatchesRegularExpression('/^kinetis_session=[a-f0-9]{32}/', $setCookie);
+        self::assertStringContainsString('SameSite=Lax', $setCookie);
     }
 
     /**

@@ -169,9 +169,10 @@ default left, and reading it throws naming the key.
 Each key below carries its header's value verbatim, except the three
 HSTS keys, which compose `Strict-Transport-Security` between them, and
 the `{nonce}` placeholder in `SECURITY_CSP`. For the verbatim keys, an
-empty value omits the header and the literal `off` — in any case —
-omits it too, so a header with a built-in default can be switched off
-without sending an invalid value. See {doc}`middleware`.
+empty value means unset — the header's default, or no header when it
+has none — and the literal `off`, in any case, omits the header, so a
+header with a built-in default can be switched off without sending an
+invalid value. See {doc}`middleware`.
 
 | Key | Default | Purpose |
 |---|---|---|

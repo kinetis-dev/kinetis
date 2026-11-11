@@ -218,6 +218,9 @@ outer transaction has rolled back and compare the stored normalized
 request with the retry before deciding idempotent replay versus genuine
 conflict.
 
+{ref}`recipes-coordination` uses the same database to keep jobs unique
+and to pace requests to a third-party host across processes.
+
 ## Driver selection
 
 `DB_DRIVER=auto`, the default, picks the driver from the runtime, and

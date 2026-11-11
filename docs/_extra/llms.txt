@@ -71,7 +71,7 @@ tutorial, then read whichever section you have reached.
 - [Storage (S3)](https://kinetis.dev/docs/storage-s3.html): Configure an S3 bucket, credentials, visibility and permissions.
 - [Mailer](https://kinetis.dev/docs/mailer.html): kinetis/mailer: mail sending via Symfony\Component\Mailer, non-blocking via kinetis/revolt-http-client for API-based transports.
 - [Broadcasting](https://kinetis.dev/docs/broadcasting.html): kinetis/broadcasting: real-time broadcasting over the Pusher Channels protocol, with private/presence channel authorization.
-- [HTTP Client](https://kinetis.dev/docs/revolt-http-client.html): kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface — usable standalone, no Kinetis required.
+- [HTTP Client](https://kinetis.dev/docs/revolt-http-client.html): kinetis/revolt-http-client: a Revolt-native Symfony HttpClientInterface with bounded responses, retries and per-host pacing across processes (withPacer()) — usable standalone, no Kinetis required.
 - [Redis](https://kinetis.dev/docs/redis.html): Configure a PSR-16 cache over Redis, TLS and Redis Cluster in a Kinetis application.
 - [Search engines](https://kinetis.dev/docs/search-engines.html): Install OpenSearch or Elasticsearch, configure a connection, index documents and search them.
 - [Search (OpenSearch)](https://kinetis.dev/docs/search-opensearch.html): kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client.
@@ -84,7 +84,7 @@ tutorial, then read whichever section you have reached.
 - [MCP Documentation Server](https://kinetis.dev/docs/mcp-docs.html): kinetis/mcp-docs: a standalone, framework-agnostic MCP server serving these pages as resources, whole, as bounded line windows or through a literal search of one page.
 - [Orbitron](https://kinetis.dev/docs/orbitron.html): kinetis/orbitron: a development-only construction harness — a portable Kinetis context document, the installed kinetis/* package inventory, a project-layout verification and one previewable health-endpoint scaffold, from a shell or over its own MCP server.
 - [Agent Workflow](https://kinetis.dev/docs/agent-workflow.html): Entry point for an agent: the current-main/installed-version boundary, and where to route a task.
-- [Application Recipes](https://kinetis.dev/docs/application-recipes.html): Routing recipes for common application tasks: the right pages, lifecycle/I-O boundary, security checks and verification for each.
+- [Application Recipes](https://kinetis.dev/docs/application-recipes.html): Routing recipes for common application tasks: the right pages, lifecycle/I-O boundary, security checks and verification for each, and coordinating work across processes — pacing a host, unique jobs and per-type concurrency.
 - [Agent Correctness Review](https://kinetis.dev/docs/agent-correctness.html): A review checklist for persistent-worker, I/O, security and integrity correctness before calling a change done.
 
 ## Reference

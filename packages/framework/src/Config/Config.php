@@ -66,14 +66,24 @@ final readonly class Config
         return new self($env);
     }
 
+    /**
+     * The raw value, an empty one included — the untyped escape hatch
+     * for a caller that needs to tell `KEY=` apart from an absent key.
+     */
     public function get(string $key, ?string $default = null): ?string
     {
         return $this->values[$key] ?? $default;
     }
 
+    /**
+     * An empty value is treated as unset and yields $default, the same
+     * rule every other typed getter applies.
+     */
     public function string(string $key, string $default): string
     {
-        return $this->values[$key] ?? $default;
+        $raw = $this->values[$key] ?? '';
+
+        return $raw === '' ? $default : $raw;
     }
 
     /**
