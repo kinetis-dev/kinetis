@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Session\Console;
 
 use Kinetis\Console\Attributes\Command;
+use Kinetis\Console\Output;
 use Kinetis\Container\RequestScope;
 use Kinetis\Session\GarbageCollectableStoreInterface;
 use Kinetis\Session\SessionStoreInterface;
@@ -19,20 +20,16 @@ use Kinetis\Session\SessionStoreInterface;
  */
 final readonly class GcCommand
 {
-    /**
-     * @param resource $output mixed, not resource, since PHP has no native
-     *                         resource type — injectable for testability
-     */
     public function __construct(
         private RequestScope $scope,
-        private mixed $output = STDOUT,
+        private Output $output,
     ) {}
 
     #[Command('session:gc', description: 'Deletes expired sessions from the configured session store.')]
     public function run(): int
     {
         if (!$this->scope->has(SessionStoreInterface::class)) {
-            \fwrite($this->output, "No session store is bound — set SESSION_DRIVER (file, redis, or sql).\n");
+            $this->output->error('No session store is bound — set SESSION_DRIVER (file, redis, or sql).');
 
             return 1;
         }
@@ -40,13 +37,13 @@ final readonly class GcCommand
         $store = $this->scope->get(SessionStoreInterface::class);
 
         if (!$store instanceof GarbageCollectableStoreInterface) {
-            \fwrite($this->output, "Nothing to collect: this session store's backend expires entries on its own.\n");
+            $this->output->line("Nothing to collect: this session store's backend expires entries on its own.");
 
             return 0;
         }
 
         $removed = $store->gc();
-        \fwrite($this->output, "Removed {$removed} expired session(s).\n");
+        $this->output->line("Removed {$removed} expired session(s).");
 
         return 0;
     }

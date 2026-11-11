@@ -10,6 +10,7 @@ use Kinetis\Console\CommandArguments;
 use Kinetis\Container\AppScope;
 use Kinetis\Queue\QueueInterface;
 use Kinetis\QueueFailedJobs\Console\RetryCommand;
+use Kinetis\QueueFailedJobs\Tests\Fixtures\CommandOutput;
 use Kinetis\QueueFailedJobs\Tests\Fixtures\RecordingQueue;
 use Kinetis\QueueFailedJobs\Tests\Fixtures\SensitiveJob;
 
@@ -36,7 +37,7 @@ final class RetryCommandTest extends CommandTestCase
     public function test_a_bound_queue_record_is_pushed_onto_the_bound_queue_then_forgotten(): void
     {
         $id = $this->store->record(self::failedJob(connection: null, queue: 'mail', maxAttempts: 5));
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
         $exit = $this->command($output)->run(CommandArguments::parse([$id]));
 
@@ -47,14 +48,15 @@ final class RetryCommandTest extends CommandTestCase
         self::assertSame('mail', $pushed['queue']);
         self::assertSame(5, $pushed['maxAttempts']);
         self::assertNull($this->store->find($id));
-        self::assertStringNotContainsString('tok-secret', self::contents($output));
+        self::assertStringContainsString('Retried "' . $id . '"', $output->takeStdout());
+        self::assertSame('', $output->takeStderr());
     }
 
     public function test_a_record_deferring_to_the_worker_default_is_pushed_without_a_cap(): void
     {
         $id = $this->store->record(self::failedJob(maxAttempts: null));
 
-        $this->command(self::memoryStream())->run(CommandArguments::parse([$id]));
+        $this->command(new CommandOutput())->run(CommandArguments::parse([$id]));
 
         self::assertNull($this->boundQueue->pushed[0]['maxAttempts']);
     }
@@ -62,53 +64,60 @@ final class RetryCommandTest extends CommandTestCase
     public function test_a_class_that_no_longer_autoloads_keeps_its_record_and_fails_the_command(): void
     {
         $id = $this->store->record(self::failedJob(class: 'App\Jobs\Removed', args: ['email' => 'a@example.com']));
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
         $exit = $this->command($output)->run(CommandArguments::parse([$id]));
 
         self::assertSame(1, $exit);
         self::assertSame([], $this->boundQueue->pushed);
         self::assertNotNull($this->store->find($id));
-        self::assertStringContainsString("Could not retry \"{$id}\" (App\\Jobs\\Removed)", self::contents($output));
-        self::assertStringNotContainsString('a@example.com', self::contents($output));
+        $error = $output->takeStderr();
+        self::assertStringContainsString("Could not retry \"{$id}\" (App\\Jobs\\Removed)", $error);
+        self::assertStringNotContainsString('a@example.com', $error);
+        self::assertStringNotContainsString('Could not retry', $output->takeStdout());
     }
 
     public function test_a_push_the_backend_refuses_keeps_its_record_and_fails_the_command(): void
     {
         $id = $this->store->record(self::failedJob());
         $this->boundQueue->refusePush = true;
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
         $exit = $this->command($output)->run(CommandArguments::parse([$id]));
 
         self::assertSame(1, $exit);
         self::assertNotNull($this->store->find($id));
-        self::assertStringContainsString("Could not retry \"{$id}\"", self::contents($output));
-        self::assertStringContainsString('The backend refused the push.', self::contents($output));
+        $error = $output->takeStderr();
+        self::assertStringContainsString("Could not retry \"{$id}\"", $error);
+        self::assertStringContainsString('The backend refused the push.', $error);
+        self::assertStringNotContainsString('Could not retry', $output->takeStdout());
     }
 
     public function test_a_connection_no_longer_configured_keeps_its_record_and_fails_the_command(): void
     {
         $id = $this->store->record(self::failedJob(connection: 'jobs'));
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
         $exit = $this->command($output)->run(CommandArguments::parse([$id]));
 
         self::assertSame(1, $exit);
         self::assertNotNull($this->store->find($id));
-        self::assertStringContainsString('QUEUE_JOBS_CONNECTION', self::contents($output));
+        self::assertStringContainsString('QUEUE_JOBS_CONNECTION', $output->takeStderr());
     }
 
     public function test_an_unknown_id_fails_the_command_and_the_others_still_retry(): void
     {
         $id = $this->store->record(self::failedJob());
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
         $exit = $this->command($output)->run(CommandArguments::parse(['0123456789abcdef0123456789abcdef', $id]));
 
         self::assertSame(1, $exit);
         self::assertCount(1, $this->boundQueue->pushed);
-        self::assertStringContainsString('Retried 1 failed job(s); 1 could not be retried.', self::contents($output));
+        self::assertSame('No failed job "0123456789abcdef0123456789abcdef".' . "\n", $output->takeStderr());
+        $printed = $output->takeStdout();
+        self::assertStringContainsString('Retried 1 failed job(s); 1 could not be retried.', $printed);
+        self::assertStringNotContainsString('No failed job', $printed);
     }
 
     public function test_all_retries_every_selected_record_across_pages_and_keeps_the_failures(): void
@@ -121,14 +130,14 @@ final class RetryCommandTest extends CommandTestCase
 
         $kept = $this->store->record(self::failedJob(class: 'App\Jobs\Removed', failedAt: 1_000));
         $other = $this->store->record(self::failedJob(connection: 'jobs', failedAt: 1_000));
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
         $exit = $this->command($output)->run(CommandArguments::parse(['--all', '--bound']));
 
         self::assertSame(1, $exit);
         self::assertCount(150, $this->boundQueue->pushed);
         self::assertEqualsCanonicalizing([$kept, $other], array_keys($this->link->rows), 'the failed retry and the unselected record remain');
-        self::assertStringContainsString('Retried 150 failed job(s); 1 could not be retried.', self::contents($output));
+        self::assertStringContainsString('Retried 150 failed job(s); 1 could not be retried.', $output->takeStdout());
     }
 
     public function test_all_leaves_a_record_that_failed_after_the_run_started(): void
@@ -136,7 +145,7 @@ final class RetryCommandTest extends CommandTestCase
         $this->store->record(self::failedJob(failedAt: 1_000));
         $later = $this->store->record(self::failedJob(failedAt: time() + 3600));
 
-        $exit = $this->command(self::memoryStream())->run(CommandArguments::parse(['--all']));
+        $exit = $this->command(new CommandOutput())->run(CommandArguments::parse(['--all']));
 
         self::assertSame(0, $exit);
         self::assertCount(1, $this->boundQueue->pushed);
@@ -160,14 +169,11 @@ final class RetryCommandTest extends CommandTestCase
     {
         $this->expectException(InvalidArgumentException::class);
 
-        $this->command(self::memoryStream())->run(CommandArguments::parse($argv));
+        $this->command(new CommandOutput())->run(CommandArguments::parse($argv));
     }
 
-    /**
-     * @param resource $output
-     */
-    private function command(mixed $output): RetryCommand
+    private function command(CommandOutput $output): RetryCommand
     {
-        return new RetryCommand($this->store, $this->app->createRequestScope(), new Config([]), $output);
+        return new RetryCommand($this->store, $this->app->createRequestScope(), new Config([]), $output->output);
     }
 }

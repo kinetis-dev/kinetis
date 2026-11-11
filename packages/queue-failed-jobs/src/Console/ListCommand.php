@@ -6,6 +6,7 @@ namespace Kinetis\QueueFailedJobs\Console;
 
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\Queue\JobSerializer;
 use Kinetis\QueueFailedJobs\SqlFailedJobStore;
 use Kinetis\QueueFailedJobs\StoredFailedJob;
@@ -24,10 +25,9 @@ final readonly class ListCommand
 {
     private const int DEFAULT_LIMIT = 50;
 
-    /** @param resource $output */
     public function __construct(
         private SqlFailedJobStore $store,
-        private mixed $output = \STDOUT,
+        private Output $output,
     ) {}
 
     #[Command(
@@ -43,13 +43,13 @@ final readonly class ListCommand
         $jobs = $this->store->list($limit, $connection, $queue);
 
         if ($jobs === []) {
-            fwrite($this->output, "No failed jobs.\n");
+            $this->output->line('No failed jobs.');
 
             return 0;
         }
 
         foreach ($jobs as $stored) {
-            fwrite($this->output, self::describe($stored));
+            $this->output->write(self::describe($stored));
         }
 
         return 0;
