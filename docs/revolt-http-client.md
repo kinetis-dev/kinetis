@@ -107,6 +107,7 @@ $response->json();                // the decoded body, as an array
 $response->jsonPath('eta.date');  // one value by dot path, or null
 $response->body();                // the raw string
 $response->header('X-Request-Id');
+$response->attempts();            // wire attempts sent, retries included
 ```
 
 An error status is a response, not an exception. Branch on `failed()`,
