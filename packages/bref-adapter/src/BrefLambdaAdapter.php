@@ -204,7 +204,7 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
         // would be under a real TCP connection, which nothing here has:
         // every invocation arrives over the Runtime API, not a socket PHP
         // itself accepted. Without this, every request looks identical to
-        // RateLimitMiddleware's identifierFor() (see docs/middleware.md),
+        // RateLimitMiddleware's identifierFor() (see https://kinetis.dev/docs/middleware.html),
         // collapsing every distinct Lambda client into one shared bucket.
         $sourceIp = $event['requestContext']['http']['sourceIp'] ?? null;
         $serverParams = is_string($sourceIp) && $sourceIp !== '' ? ['REMOTE_ADDR' => $sourceIp] : [];

@@ -67,7 +67,7 @@ if ($env->isProduction()) {
     // instance included, not just the raw DTOs — or it counts as absent
     // and $compile runs exactly once. See its own docblock. The OpenAPI
     // document is never part of this — it's generated and cached
-    // separately, see docs/caching.md.
+    // separately, see https://kinetis.dev/docs/caching.html.
     $resolved = BootSequence::resolveCli(
         $store,
         static fn (): CompiledCache => (new Compiler())->compileProject(new DiscoveryContext($projectRoot)),

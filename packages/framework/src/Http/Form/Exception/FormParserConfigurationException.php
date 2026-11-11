@@ -30,7 +30,7 @@ final class FormParserConfigurationException extends RuntimeException
         return new self(
             "arg_separator.input must be \"&\" so parse_str() reads a form the way Kinetis counted it, got \"{$configured}\". "
             . 'It is PHP_INI_PERDIR, so set it in php.ini, an .htaccess or the FPM pool config. '
-            . 'See the "Request bodies: one contract under every runtime" section of docs/runtime-adapters.md.',
+            . 'See the "Request bodies: one contract under every runtime" section of https://kinetis.dev/docs/runtime-adapters.html',
         );
     }
 }

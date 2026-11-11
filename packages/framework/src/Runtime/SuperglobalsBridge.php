@@ -131,7 +131,7 @@ final class SuperglobalsBridge
                 'enable_post_data_reading must be 0 so Kinetis reads and bounds the request body itself. '
                 . 'Left on, PHP parses form bodies before any Kinetis code runs, silently truncating them at '
                 . 'its own max_input_vars/post_max_size limits and leaving php://input empty. '
-                . 'See the "Request bodies: one contract under every runtime" section of docs/runtime-adapters.md.',
+                . 'See the "Request bodies: one contract under every runtime" section of https://kinetis.dev/docs/runtime-adapters.html',
             );
         }
     }

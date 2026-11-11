@@ -24,7 +24,8 @@ use PHPStan\Rules\RuleErrorBuilder;
  * a Revolt-backed one. Running such a call inside a Fiber does not make it
  * yield: it holds the worker and every other Fiber and watcher on its event
  * loop until it returns. The categories, their replacements, and the
- * limitations are documented in docs/concurrency.md, "Keeping application
+ * limitations are documented in
+ * {@link https://kinetis.dev/docs/concurrency.html}, "Keeping application
  * I/O non-blocking".
  *
  * Names resolve the way PHP resolves them, through PHPStan's scope and

@@ -12,7 +12,8 @@ use function Kinetis\Async\concurrently;
 
 /**
  * Observes whether the event loop turns while an operation is in flight.
- * See docs/testing.md, "Proving a path keeps the loop responsive".
+ * See {@link https://kinetis.dev/docs/testing.html}, "Proving a path keeps
+ * the loop responsive".
  *
  * The sentinel and the operation run as two concurrently() tasks, sentinel
  * first: its timer is registered before the operation starts, so it is

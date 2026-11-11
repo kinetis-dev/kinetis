@@ -26,7 +26,7 @@ namespace Kinetis\Cache;
  * It says nothing about whether the artifact matches the project's
  * current source. Keeping a published artifact in step with the code it
  * was compiled from is the deployment build's job — see
- * docs/caching.md.
+ * {@link https://kinetis.dev/docs/caching.html}.
  */
 final class CacheFormat
 {
