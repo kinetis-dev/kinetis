@@ -91,8 +91,10 @@ following automatically, through the `extra.kinetis` declaration in its
 
 - **Commands**: `migrate`, `migrate:rollback`, `migrate:status`, and
   `migrate:make` on `vendor/bin/kinetis`. All four run without the
-  application's bootstrap (`bootstrap: false`) — they read `DB_*`
-  directly, through
+  application's bootstrap (`bootstrap: false`) — they read `DB_*` from
+  the application's configuration (the environment and `.env` under
+  `vendor/bin/kinetis`, a test's overrides under
+  `TestApplication::command()`), through
   [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)'s
   connection policy, so they work in bare contexts (CI, an init
   container) with nothing but environment variables. A run holds one PDO

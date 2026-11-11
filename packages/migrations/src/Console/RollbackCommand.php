@@ -4,22 +4,28 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations\Console;
 
+use Kinetis\Config\Config;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\Events\EventDispatcher;
 use Kinetis\Migrations\Events\MigrationRolledBack;
 use Kinetis\Migrations\MigrationRunner;
+use Kinetis\Runtime\ProjectRoot;
 
 final readonly class RollbackCommand
 {
     public function __construct(
         private EventDispatcher $events,
+        private Output $output,
+        private ProjectRoot $projectRoot,
+        private Config $config,
     ) {}
 
     #[Command('migrate:rollback', description: 'Roll back the most recent migration on one connection. --connection=<name> selects it, and is required when migrations/ has connection directories.', bootstrap: false)]
     public function run(CommandArguments $arguments): int
     {
-        return $this->runIn(MigrationContext::detect(), $arguments);
+        return $this->runIn(MigrationContext::forProject($this->projectRoot, $this->config), $arguments);
     }
 
     /**
@@ -34,9 +40,9 @@ final readonly class RollbackCommand
         $partitions = $context->partitions($arguments);
 
         if (\count($partitions) > 1) {
-            fwrite(STDERR, "Usage: kinetis migrate:rollback --connection=<name>\n"
-                . 'A rollback never spans databases, and migrations/ declares the connections '
-                . implode(', ', array_keys($partitions)) . ": --connection=<name> or MIGRATE_CONNECTION_NAME is required.\n");
+            $this->output->error('Usage: kinetis migrate:rollback --connection=<name>');
+            $this->output->error('A rollback never spans databases, and migrations/ declares the connections '
+                . implode(', ', array_keys($partitions)) . ': --connection=<name> or MIGRATE_CONNECTION_NAME is required.');
 
             return 1;
         }
@@ -45,10 +51,10 @@ final readonly class RollbackCommand
         $name = $context->run($connection, $partitions[$connection], static fn (MigrationRunner $runner): ?string => $runner->rollback());
 
         if ($name !== null) {
-            fwrite(STDOUT, "Rolled back: {$name}\n");
+            $this->output->line("Rolled back: {$name}");
             $this->events->dispatch(new MigrationRolledBack($name, $connection));
         } else {
-            fwrite(STDOUT, "Nothing to roll back.\n");
+            $this->output->line('Nothing to roll back.');
         }
 
         return 0;

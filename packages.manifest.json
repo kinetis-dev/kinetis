@@ -245,7 +245,7 @@
             "description": "A thin database migration runner and migrate commands for Kinetis — raw SQL up()/down() migrations for the default connection and named ones, no fluent DDL builder, no schema-diffing.",
             "namespace": "Kinetis\\Migrations\\",
             "testNamespace": "Kinetis\\Migrations\\Tests\\",
-            "version": "1.4.5",
+            "version": "1.5.0",
             "requires": [
                 "framework",
                 "persistence",

@@ -4,26 +4,30 @@ declare(strict_types=1);
 
 namespace Kinetis\Migrations\Tests\Integration;
 
+use Kinetis\Config\Config;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
 use Kinetis\Migrations\Console\MigrateCommand;
 use Kinetis\Migrations\Console\RollbackCommand;
 use Kinetis\Migrations\Console\StatusCommand;
 use Kinetis\Migrations\Tests\Fixtures\MigrationEventRecorder;
-use Kinetis\Migrations\Tests\Fixtures\OutputCapture;
+use Kinetis\Migrations\Tests\Fixtures\CommandOutput;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Migrations\Events\MigrationApplied;
 use Kinetis\Migrations\Events\MigrationRolledBack;
 use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Driver\PdoMysqlClient;
 use Kinetis\Persistence\Driver\PdoPgsqlClient;
+use Kinetis\Runtime\ProjectRoot;
 use PHPUnit\Framework\TestCase;
 
 /**
  * migrate, migrate:status and migrate:rollback against a real MySQL, the
  * way bin/kinetis runs them: `bootstrap: false`, the connection read from
- * the process environment, and the project the Composer bin proxy names.
+ * a Config snapshot of the process environment, and the project root the
+ * entry point binds.
  * What each prints and the events it dispatches are the contract.
  *
  * Environment-gated on MYSQL_HOST, like every other real-backend test in
@@ -43,7 +47,7 @@ final class MigrationCommandsTest extends TestCase
 
     private string $projectRoot;
 
-    private mixed $composerBinDir;
+    private CommandOutput $capture;
 
     /** @var array<string, string|false> */
     private array $originalEnvironment = [];
@@ -81,9 +85,6 @@ final class MigrationCommandsTest extends TestCase
 
         $this->projectRoot = \sys_get_temp_dir() . '/kinetis-bridge-migrations-' . \bin2hex(\random_bytes(8));
         \mkdir($this->projectRoot . '/migrations', recursive: true);
-        \mkdir($this->projectRoot . '/vendor/bin', recursive: true);
-        $this->composerBinDir = $GLOBALS['_composer_bin_dir'] ?? null;
-        $GLOBALS['_composer_bin_dir'] = $this->projectRoot . '/vendor/bin';
     }
 
     protected function tearDown(): void
@@ -93,7 +94,6 @@ final class MigrationCommandsTest extends TestCase
             return;
         }
 
-        $GLOBALS['_composer_bin_dir'] = $this->composerBinDir;
         self::setEnvironment($this->originalEnvironment);
 
         foreach ([...\glob($this->projectRoot . '/migrations/reporting/*.php') ?: [], ...\glob($this->projectRoot . '/migrations/*.php') ?: []] as $file) {
@@ -105,27 +105,25 @@ final class MigrationCommandsTest extends TestCase
         }
 
         \rmdir($this->projectRoot . '/migrations');
-        \rmdir($this->projectRoot . '/vendor/bin');
-        \rmdir($this->projectRoot . '/vendor');
         \rmdir($this->projectRoot);
     }
 
     public function test_the_commands_print_and_dispatch_what_they_did(): void
     {
-        [$scope, $recorder] = self::commandScope();
+        [$scope, $recorder] = $this->commandScope();
 
-        self::assertSame([0, "No migrations found.\n"], self::runStatus($scope));
-        self::assertSame([0, "Nothing to migrate.\n"], self::runMigrate($scope));
-        self::assertSame([0, "Nothing to roll back.\n"], self::runRollback($scope));
+        self::assertSame([0, "No migrations found.\n"], $this->runStatus($scope));
+        self::assertSame([0, "Nothing to migrate.\n"], $this->runMigrate($scope));
+        self::assertSame([0, "Nothing to roll back.\n"], $this->runRollback($scope));
 
         $this->writeMigration();
 
-        self::assertSame([0, '[pending] ' . self::MIGRATION . "\n"], self::runStatus($scope));
-        self::assertSame([0, 'Migrated: ' . self::MIGRATION . "\n"], self::runMigrate($scope));
-        self::assertSame([0, '[applied] ' . self::MIGRATION . "\n"], self::runStatus($scope));
-        self::assertSame([0, "Nothing to migrate.\n"], self::runMigrate($scope));
-        self::assertSame([0, 'Rolled back: ' . self::MIGRATION . "\n"], self::runRollback($scope));
-        self::assertSame([0, '[pending] ' . self::MIGRATION . "\n"], self::runStatus($scope));
+        self::assertSame([0, '[pending] ' . self::MIGRATION . "\n"], $this->runStatus($scope));
+        self::assertSame([0, 'Migrated: ' . self::MIGRATION . "\n"], $this->runMigrate($scope));
+        self::assertSame([0, '[applied] ' . self::MIGRATION . "\n"], $this->runStatus($scope));
+        self::assertSame([0, "Nothing to migrate.\n"], $this->runMigrate($scope));
+        self::assertSame([0, 'Rolled back: ' . self::MIGRATION . "\n"], $this->runRollback($scope));
+        self::assertSame([0, '[pending] ' . self::MIGRATION . "\n"], $this->runStatus($scope));
 
         self::assertEquals(
             [new MigrationApplied(self::MIGRATION, 'default'), new MigrationRolledBack(self::MIGRATION, 'default')],
@@ -160,13 +158,13 @@ final class MigrationCommandsTest extends TestCase
         $postgres->execute('DROP TABLE IF EXISTS bridge_reports');
         $postgres->execute('DROP TABLE IF EXISTS kinetis_migrations');
 
-        [$scope, $recorder] = self::commandScope();
+        [$scope, $recorder] = $this->commandScope();
         $this->writeMigration();
         $this->writeMigration('reporting', self::REPORTING_MIGRATION, 'bridge_reports');
 
         self::assertSame(
             [0, "Connection: default\nMigrated: " . self::MIGRATION . "\nConnection: reporting\nMigrated: " . self::REPORTING_MIGRATION . "\n"],
-            self::runMigrate($scope),
+            $this->runMigrate($scope),
         );
 
         $mysql = self::client();
@@ -176,10 +174,12 @@ final class MigrationCommandsTest extends TestCase
         self::assertSame([], self::column($postgres, "SELECT table_name FROM information_schema.tables WHERE table_name = 'bridge_widgets'"));
 
         // Without a selection, a rollback refuses to pick a database.
-        self::assertSame(1, OutputCapture::of(\STDERR, static fn (): int => $scope->get(RollbackCommand::class)->run(new CommandArguments([], [])))[0]);
+        self::assertSame(1, $scope->get(RollbackCommand::class)->run(new CommandArguments([], [])));
+        self::assertSame('', $this->capture->takeStdout());
+        self::assertStringStartsWith("Usage: kinetis migrate:rollback --connection=<name>\n", $this->capture->takeStderr());
         self::assertSame(
             [0, 'Rolled back: ' . self::REPORTING_MIGRATION . "\n"],
-            OutputCapture::of(\STDOUT, static fn (): int => $scope->get(RollbackCommand::class)->run(new CommandArguments([], ['connection' => 'reporting']))),
+            $this->stdoutOf(static fn (): int => $scope->get(RollbackCommand::class)->run(new CommandArguments([], ['connection' => 'reporting']))),
         );
 
         self::assertSame([self::MIGRATION], self::column($mysql, 'SELECT migration FROM kinetis_migrations'));
@@ -200,41 +200,61 @@ final class MigrationCommandsTest extends TestCase
     }
 
     /** @return array{int, string} */
-    private static function runStatus(RequestScope $scope): array
+    private function runStatus(RequestScope $scope): array
     {
-        return OutputCapture::of(\STDOUT, static fn (): int => $scope->get(StatusCommand::class)->run(new CommandArguments([], [])));
+        return $this->stdoutOf(static fn (): int => $scope->get(StatusCommand::class)->run(new CommandArguments([], [])));
     }
 
     /** @return array{int, string} */
-    private static function runMigrate(RequestScope $scope): array
+    private function runMigrate(RequestScope $scope): array
     {
-        return OutputCapture::of(\STDOUT, static fn (): int => $scope->get(MigrateCommand::class)->run(new CommandArguments([], [])));
+        return $this->stdoutOf(static fn (): int => $scope->get(MigrateCommand::class)->run(new CommandArguments([], [])));
     }
 
     /** @return array{int, string} */
-    private static function runRollback(RequestScope $scope): array
+    private function runRollback(RequestScope $scope): array
     {
-        return OutputCapture::of(\STDOUT, static fn (): int => $scope->get(RollbackCommand::class)->run(new CommandArguments([], [])));
+        return $this->stdoutOf(static fn (): int => $scope->get(RollbackCommand::class)->run(new CommandArguments([], [])));
     }
 
     /**
-     * The container bin/kinetis resolves a command from, with the
-     * discovered listener registry bound the way BootSequence binds it.
+     * @param callable(): int $run
+     * @return array{int, string} the exit code and stdout; stderr must stay empty
+     */
+    private function stdoutOf(callable $run): array
+    {
+        $exitCode = $run();
+        self::assertSame('', $this->capture->takeStderr());
+
+        return [$exitCode, $this->capture->takeStdout()];
+    }
+
+    /**
+     * The container bin/kinetis resolves a command from: the Config
+     * snapshot and project root it binds on the application scope, the
+     * discovered listener registry bound the way BootSequence binds it,
+     * and an Output on the command's request scope.
      *
      * @return array{RequestScope, MigrationEventRecorder}
      */
-    private static function commandScope(): array
+    private function commandScope(): array
     {
         $recorder = new MigrationEventRecorder();
         $listeners = new EventListenerRegistry();
         $listeners->register(MigrationEventRecorder::class);
 
         $app = new AppScope();
+        $app->instance(Config::class, Config::fromEnvironment());
+        $app->instance(ProjectRoot::class, new ProjectRoot($this->projectRoot));
         $app->instance(EventListenerRegistry::class, $listeners);
         $app->instance(MigrationEventRecorder::class, $recorder);
         $app->boot();
 
-        return [$app->createRequestScope(), $recorder];
+        $scope = $app->createRequestScope();
+        $this->capture = new CommandOutput();
+        $scope->instance(Output::class, $this->capture->output);
+
+        return [$scope, $recorder];
     }
 
     private function writeMigration(string $directory = '', string $name = self::MIGRATION, string $table = 'bridge_widgets'): void

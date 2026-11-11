@@ -8,6 +8,7 @@ use InvalidArgumentException;
 use Kinetis\Config\Config;
 use Kinetis\Config\Exception\MissingConfigException;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
 use Kinetis\DatabaseBridge\ConnectionFactory;
@@ -22,7 +23,8 @@ use Kinetis\Migrations\Exception\MigrationIntegrityException;
 use Kinetis\Migrations\Tests\Fixtures\FakeDatabase;
 use Kinetis\Migrations\Tests\Fixtures\FakeDatabaseLink;
 use Kinetis\Migrations\Tests\Fixtures\MigrationEventRecorder;
-use Kinetis\Migrations\Tests\Fixtures\OutputCapture;
+use Kinetis\Runtime\ProjectRoot;
+use Kinetis\Migrations\Tests\Fixtures\CommandOutput;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -66,6 +68,8 @@ final class PartitionedCommandsTest extends TestCase
 
     private MigrationEventRecorder $recorder;
 
+    private CommandOutput $capture;
+
     protected function setUp(): void
     {
         $this->migrations = \sys_get_temp_dir() . '/kinetis-partitioned-migrations-' . \bin2hex(\random_bytes(8));
@@ -82,8 +86,14 @@ final class PartitionedCommandsTest extends TestCase
         $app = new AppScope();
         $app->instance(EventListenerRegistry::class, $listeners);
         $app->instance(MigrationEventRecorder::class, $this->recorder);
+        // runIn() takes its context from each test; the commands still
+        // receive what bin/kinetis binds.
+        $app->instance(Config::class, new Config(self::CONFIGURED));
+        $app->instance(ProjectRoot::class, new ProjectRoot(\dirname($this->migrations)));
         $app->boot();
         $this->scope = $app->createRequestScope();
+        $this->capture = new CommandOutput();
+        $this->scope->instance(Output::class, $this->capture->output);
     }
 
     protected function tearDown(): void
@@ -178,9 +188,11 @@ final class PartitionedCommandsTest extends TestCase
         $this->runMigrate();
         $this->opened = [];
 
-        [$exitCode, $error] = OutputCapture::of(\STDERR, fn (): int => $this->scope->get(RollbackCommand::class)->runIn($this->context(), new CommandArguments([], [])));
+        $exitCode = $this->scope->get(RollbackCommand::class)->runIn($this->context(), new CommandArguments([], []));
+        $error = $this->capture->takeStderr();
 
         self::assertSame(1, $exitCode);
+        self::assertSame('', $this->capture->takeStdout());
         self::assertSame("Usage: kinetis migrate:rollback --connection=<name>\nA rollback never spans databases, and migrations/ declares "
             . "the connections default, reporting: --connection=<name> or MIGRATE_CONNECTION_NAME is required.\n", $error);
         self::assertSame([], $this->opened);
@@ -195,11 +207,12 @@ final class PartitionedCommandsTest extends TestCase
         $config = self::CONFIGURED;
         unset($config['DB_REPORTING_CONNECTION'], $config['DB_REPORTING_PASSWORD']);
 
-        [$failure, $output] = $this->failingMigrate($config);
+        [$failure, $output, $error] = $this->failingMigrate($config);
 
         self::assertInstanceOf(MissingConfigException::class, $failure);
         self::assertSame('Missing required config value "DB_REPORTING_CONNECTION".', $failure->getMessage());
-        self::assertSame("Connection: reporting\n", $output);
+        self::assertSame('', $output);
+        self::assertSame("Connection: reporting\n", $error);
         self::assertSame([], $this->databases['default']->executed);
         self::assertSame([], $this->databases['default']->ledger);
         self::assertSame([], $this->recorder->events);
@@ -216,10 +229,11 @@ final class PartitionedCommandsTest extends TestCase
         $this->migration('reporting', self::REPORTING);
         $this->databases['reporting']->ledger[self::REPORTING] = \str_repeat('0', 64);
 
-        [$failure, $output] = $this->failingMigrate();
+        [$failure, $output, $error] = $this->failingMigrate();
 
         self::assertInstanceOf(MigrationIntegrityException::class, $failure);
-        self::assertSame("Connection: reporting\n", $output);
+        self::assertSame('', $output);
+        self::assertSame("Connection: reporting\n", $error);
 
         foreach ($this->databases as $database) {
             self::assertSame([], $database->executed);
@@ -242,11 +256,12 @@ final class PartitionedCommandsTest extends TestCase
         $this->migration('', self::ROOT);
         $this->migration('reporting', '20260101000004_create_totals');
 
-        [$failure, $output] = $this->failingMigrate();
+        [$failure, $output, $error] = $this->failingMigrate();
 
         self::assertInstanceOf(MigrationIntegrityException::class, $failure);
         self::assertStringContainsString(self::REPORTING, $failure->getMessage());
-        self::assertSame("Connection: {$appliedOn}\n", $output);
+        self::assertSame('', $output);
+        self::assertSame("Connection: {$appliedOn}\n", $error);
 
         foreach ($this->databases as $database) {
             self::assertSame([], $database->executed);
@@ -268,11 +283,12 @@ final class PartitionedCommandsTest extends TestCase
         $this->migration('audit', '20260101000003_fail', fails: true);
         $this->migration('reporting', self::REPORTING);
 
-        [$failure, $output] = $this->failingMigrate();
+        [$failure, $output, $error] = $this->failingMigrate();
 
         self::assertInstanceOf(RuntimeException::class, $failure);
         self::assertSame('20260101000003_fail failed', $failure->getMessage());
         self::assertSame("Connection: default\nMigrated: " . self::ROOT . "\nConnection: audit\n", $output);
+        self::assertSame('', $error);
 
         self::assertSame([self::ROOT], \array_keys($this->databases['default']->ledger));
         self::assertSame([], $this->databases['audit']->ledger);
@@ -312,33 +328,41 @@ final class PartitionedCommandsTest extends TestCase
     {
         $context = $this->context($environment + $config);
 
-        return OutputCapture::of(\STDOUT, fn (): int => $this->scope->get(MigrateCommand::class)->runIn($context, new CommandArguments([], $options)));
+        return $this->stdoutOf(fn (): int => $this->scope->get(MigrateCommand::class)->runIn($context, new CommandArguments([], $options)));
     }
 
     /**
      * A plain migrate that must fail.
      *
      * @param array<string, string> $config
-     * @return array{Throwable, string} the failure, and what was printed before it
+     * @return array{Throwable, string, string} the failure, and what was printed to stdout and stderr before it
      */
     private function failingMigrate(array $config = self::CONFIGURED): array
     {
         $context = $this->context($config);
         $failure = null;
 
-        [, $output] = OutputCapture::of(\STDOUT, function () use ($context, &$failure): int {
-            try {
-                return $this->scope->get(MigrateCommand::class)->runIn($context, new CommandArguments([], []));
-            } catch (Throwable $e) {
-                $failure = $e;
-
-                return 1;
-            }
-        });
+        try {
+            $this->scope->get(MigrateCommand::class)->runIn($context, new CommandArguments([], []));
+        } catch (Throwable $e) {
+            $failure = $e;
+        }
 
         self::assertInstanceOf(Throwable::class, $failure, 'The run must fail.');
 
-        return [$failure, $output];
+        return [$failure, $this->capture->takeStdout(), $this->capture->takeStderr()];
+    }
+
+    /**
+     * @param callable(): int $run
+     * @return array{int, string} the exit code and stdout; stderr must stay empty
+     */
+    private function stdoutOf(callable $run): array
+    {
+        $exitCode = $run();
+        self::assertSame('', $this->capture->takeStderr());
+
+        return [$exitCode, $this->capture->takeStdout()];
     }
 
     /**
@@ -350,7 +374,7 @@ final class PartitionedCommandsTest extends TestCase
     {
         $context = $this->context($environment + self::CONFIGURED);
 
-        return OutputCapture::of(\STDOUT, static fn (): int => new StatusCommand()->runIn($context, new CommandArguments([], $options)));
+        return $this->stdoutOf(fn (): int => $this->scope->get(StatusCommand::class)->runIn($context, new CommandArguments([], $options)));
     }
 
     /**
@@ -362,7 +386,7 @@ final class PartitionedCommandsTest extends TestCase
     {
         $context = $this->context($environment + self::CONFIGURED);
 
-        return OutputCapture::of(\STDOUT, fn (): int => $this->scope->get(RollbackCommand::class)->runIn($context, new CommandArguments([], $options)));
+        return $this->stdoutOf(fn (): int => $this->scope->get(RollbackCommand::class)->runIn($context, new CommandArguments([], $options)));
     }
 
     /** @param array<string, string> $config */
