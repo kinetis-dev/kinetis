@@ -24,8 +24,9 @@ use Kinetis\Persistence\Driver\PgsqlAsyncClient;
  *   exists (FrankenPHP worker mode) or `RR_MODE=http` (RoadRunner), PDO
  *   everywhere else — PHP-FPM and AWS Lambda included (see
  *   {@link https://kinetis.dev/docs/persistence.html} for what Lambda needs
- *   before `native` is the right choice there). Native is the measured default for the
- *   supported persistent-worker targets, FrankenPHP and RoadRunner; PDO
+ *   before `native` is the right choice there). Native is the measured
+ *   default for the supported persistent-worker targets, FrankenPHP and
+ *   RoadRunner; PDO
  *   is the baseline everywhere else because it is the commonly installed
  *   and default-enabled driver. Lambda stays an explicit opt-in: the
  *   deployment has to ship the native extension and budget a pool per
