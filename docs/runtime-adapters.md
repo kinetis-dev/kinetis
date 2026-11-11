@@ -417,6 +417,201 @@ What Lambda does not support:
 the request's host, port and target are derived, and how each field maps
 to PSR-7.
 
+## Docker Compose on one EC2 instance
+
+One instance runs the FrankenPHP app, a queue worker, PostgreSQL and
+Redis under Compose. The instance role supplies AWS credentials, an EBS
+volume holds the data, SSM Parameter Store holds the secrets, and
+CloudWatch Logs receives the output.
+
+```{code-block} yaml
+:caption: /srv/app/compose.yaml
+
+x-app: &app
+  image: registry.example.com/app:1.4.0
+  env_file:
+    - path: app.env
+      format: raw
+  logging: &logging
+    driver: awslogs
+    options:
+      awslogs-region: eu-west-1
+      awslogs-group: /app/prod
+      awslogs-create-group: "true"
+  restart: unless-stopped
+
+services:
+  app:
+    <<: *app
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  queue-worker:
+    <<: *app
+    command: ["php", "vendor/bin/kinetis", "queue:work"]
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
+  migrate:
+    <<: *app
+    command: ["php", "vendor/bin/kinetis", "migrate"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17
+    env_file:
+      - path: postgres.env
+        format: raw
+    volumes:
+      - /srv/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      # "app" is POSTGRES_USER from postgres.env.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "app"]
+      interval: 5s
+      retries: 20
+    logging: *logging
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - /srv/data/redis:/data
+    logging: *logging
+    restart: unless-stopped
+```
+
+`migrate` runs once and gates the app and the worker, as in the
+tutorial's [Storing pings](tutorial.md#storing-pings-mysql-migrations-and-the-query-builder);
+the tutorial also explains the `pg_isready -h 127.0.0.1` probe. The
+worker and `migrate` disable the inherited FrankenPHP healthcheck, per
+[Command-line services on the same image](#command-line-services-on-the-same-image).
+Stop signal and grace period for the worker are in {doc}`queue`'s
+"Deploys and restarts".
+
+**Credentials from the instance role.** `kinetis/queue-sqs` and
+`kinetis/storage-s3` resolve credentials through a chain that ends at the
+instance metadata service ({ref}`aws-sigv4-reference-credentials`), so
+the environment carries no AWS keys. IMDSv2 answers the session-token
+`PUT` with an IP hop limit of `1` by default, and a container on Compose's
+bridge network is one hop further away, so its token request never gets
+a reply. Allow two hops:
+
+```{code-block} sh
+aws ec2 modify-instance-metadata-options \
+    --instance-id i-0123456789abcdef0 \
+    --http-tokens required \
+    --http-put-response-hop-limit 2 \
+    --http-endpoint enabled
+```
+
+Every container on the instance then gets the role's credentials, so
+grant the role only what the application needs. A third-party client,
+such as a mailer transport for SES, uses the role only when it falls back
+to the default AWS credential chain; check its own documentation.
+
+**Data on an EBS volume.** Mount a separate EBS volume at `/srv/data` and
+bind-mount the PostgreSQL and Redis data directories from it.
+`--appendonly yes` makes Redis log every write, so a restart loses at
+most the last second of queued jobs and sessions rather than everything
+since its last snapshot. Start Compose only after the volume is
+mounted (`RequiresMountsFor=` below); otherwise Docker creates empty
+directories on the root volume and PostgreSQL initialises a new, empty
+cluster there. Back up with EBS snapshots, scheduled through Amazon Data
+Lifecycle Manager or `aws ec2 create-snapshot --volume-id`. A snapshot
+of the running volume is crash-consistent, and PostgreSQL recovers from
+it as from a power loss while its whole data directory is on that one
+volume. A volume lives in one Availability Zone; a replacement instance
+elsewhere starts from a snapshot.
+
+Only the data volume has to survive instance replacement. The image
+comes from the registry, the secrets from Parameter Store, and
+`compose.yaml`, the systemd unit and the fetch script from your
+provisioning. The root volume is disposable.
+
+**Secrets from SSM Parameter Store.** Kinetis reads configuration from
+the environment and `.env` only ({doc}`config`). Write the parameters to
+env files before Compose starts:
+
+```{code-block} sh
+:caption: /srv/app/fetch-env
+
+#!/bin/sh
+set -eu
+umask 077
+
+fetch() {
+    aws ssm get-parameters-by-path --region eu-west-1 --path "$1" --with-decryption \
+        --query 'Parameters[*].[Name,Value]' --output text > "$2.raw"
+    awk -F '\t' '{ name = $1; sub(/.*\//, "", name); print name "=" substr($0, length($1) + 2) }' \
+        "$2.raw" > "$2.tmp"
+    rm "$2.raw"
+    mv "$2.tmp" "$2"
+}
+
+fetch /app/prod/app/ /srv/app/app.env
+fetch /app/prod/postgres/ /srv/app/postgres.env
+```
+
+```{code-block} ini
+:caption: /etc/systemd/system/app.service
+
+[Unit]
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/srv/app
+ExecStartPre=/srv/app/fetch-env
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+
+[Install]
+WantedBy=multi-user.target
+```
+
+A parameter `/app/prod/app/DB_PASSWORD` becomes `DB_PASSWORD=<value>`
+in `app.env`. Each path holds one service's keys, so PostgreSQL never
+receives the application's secrets. The files are created mode `0600`,
+live only on the host, and stay out of the image and its build context.
+`format: raw` passes each value to the container unchanged, with no
+interpolation of `$` or quotes. Each value must be a single line.
+
+The role needs `ssm:GetParametersByPath` on both paths, and
+`kms:Decrypt` on the key when `SecureString` parameters use a customer
+managed key. A container receives the env file when Compose creates it,
+and the application reads its configuration once at boot ({doc}`config`),
+so a rotated parameter takes effect after `systemctl restart app`, which
+fetches the files again and recreates the containers.
+
+**Logs in CloudWatch.** The `awslogs` driver ships each container's
+stdout and stderr to the log group. Under FrankenPHP worker mode and in
+console commands, the default logger writes to stderr unless PHP's
+`error_log` names a file ({doc}`logging`), so the app, the worker and
+`migrate` reach CloudWatch without a logger of their own. The Docker daemon, not the container, sends the logs with
+the instance role's credentials, so the role needs `logs:CreateLogStream`
+and `logs:PutLogEvents`, plus `logs:CreateLogGroup` for
+`awslogs-create-group`.
+
 ## Recycling persistent workers
 
 Kinetis disposes request state at request end and never restarts a

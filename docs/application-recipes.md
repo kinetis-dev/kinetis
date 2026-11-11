@@ -206,7 +206,8 @@ directly — {doc}`routing-validation`, {doc}`session`,
 ## Scheduled console command
 
 - **Guides**: {doc}`cli`, "Running commands on a schedule", and
-  {doc}`persistence` for the unique key that claims a run.
+  {doc}`persistence` for the unique key that claims a run. When each row
+  stores its own due time, see {ref}`recipes-due-work`.
 - **Lifecycle/I-O**: the scheduler lives outside Kinetis and starts
   `vendor/bin/kinetis <command>` in its own process, which ends with the
   command. The exit code is what the scheduler sees.
@@ -619,6 +620,127 @@ deletes it, for example from a `JobFailedPermanently` listener
 ({doc}`events`). On any other backend the claim and the push cannot be
 one atomic step: a push that fails, or whose outcome is unknown, after
 the claim committed leaves a claim with no job behind it.
+
+(recipes-due-work)=
+
+### Work that falls due
+
+When the due time comes from data, such as a reminder 30 minutes before
+each stored event, a fixed schedule entry cannot name it. Run one short
+command every minute from an external timer: a cron entry, a systemd
+timer, or a scheduled ECS task ({doc}`cli`'s "Running commands on a
+schedule"). The command claims each due row and pushes one job for it;
+a queue worker does the work.
+
+```{code-block} sql
+CREATE TABLE events (
+    id                  BIGINT PRIMARY KEY,
+    starts_at           DATETIME NOT NULL, -- UTC; TIMESTAMP on Postgres
+    reminder_claimed_at DATETIME NULL
+);
+```
+
+```{code-block} php
+namespace App\Console;
+
+use App\Clock;
+use App\Jobs\SendEventReminder;
+use DateTimeZone;
+use Kinetis\Console\Attributes\Command;
+use Kinetis\Persistence\Contract\SqlLink;
+use Kinetis\Persistence\Contract\SqlTransaction;
+use Kinetis\Persistence\TransactionGuard;
+use Kinetis\QueueSql\SqlQueue;
+
+final readonly class DispatchEventReminders
+{
+    public function __construct(
+        private SqlLink $db,
+        private TransactionGuard $transactions,
+        private SqlQueue $queue,
+        private Clock $clock,
+    ) {}
+
+    #[Command('app:dispatch-reminders', description: 'Queues a reminder for each event starting within 30 minutes')]
+    public function run(): int
+    {
+        $now = $this->clock->now()->setTimezone(new DateTimeZone('UTC'));
+        $due = $this->db->execute(
+            'SELECT id FROM events
+              WHERE starts_at > ? AND starts_at <= ? AND reminder_claimed_at IS NULL
+              ORDER BY starts_at LIMIT 500',
+            [$now->format('Y-m-d H:i:s'), $now->modify('+30 minutes')->format('Y-m-d H:i:s')],
+        );
+
+        foreach ($due as $row) {
+            $this->transactions->transaction($this->db, function (SqlTransaction $tx) use ($row, $now): void {
+                $claimed = $tx->execute(
+                    'UPDATE events SET reminder_claimed_at = ? WHERE id = ? AND reminder_claimed_at IS NULL',
+                    [$now->format('Y-m-d H:i:s'), $row['id']],
+                )->getRowCount();
+
+                if ($claimed === 1) {
+                    $this->queue->pushOn($tx, new SendEventReminder((int) $row['id']));
+                }
+            });
+        }
+
+        return 0;
+    }
+}
+```
+
+`Clock` and `SendEventReminder` are the application's own: the clock is
+the injectable one from "A controllable clock", and the job is an
+ordinary {doc}`queue` job. `SqlQueue` must be registered under its own
+class as {doc}`queue-sql`'s "Enqueueing inside a transaction" shows.
+
+- **One claim per row.** The conditional `UPDATE` affects one row for
+  exactly one transaction. A run that overlaps the previous one, or a
+  timer that fires twice, finds `reminder_claimed_at` already set and
+  pushes nothing, so the timer needs no lock of its own. `pushOn()` puts
+  the job on the claim's transaction, so a claimed row always has its
+  job. On another backend the claim commits before `push()`, with the
+  gap "Unique jobs" above describes.
+- **Late, not lost.** A row stays due until a run claims it, so a missed
+  minute is picked up by the next run. `starts_at > ?` skips events that
+  started while no run claimed them; drop it if those must still run.
+  `LIMIT` bounds one run, and the next minute takes the rest.
+- **UTC throughout.** Store due times as UTC wall-clock values and
+  compute every cutoff in PHP from the UTC clock, as
+  {doc}`queue-sql`'s "Stored times" does for the queue's own columns. A
+  comparison with the database's `NOW()` depends on the session time
+  zone.
+- **The job still runs at least once.** `SendEventReminder` follows
+  "Queue job with retry/idempotency considerations" above, and checks
+  the event again, since it can be cancelled between claim and run.
+
+Test the command through `TestApplication::command()` ({doc}`testing`'s
+"Testing a command") with a fixed clock registered as a test double, and
+run it twice to prove the claim. In an `ApplicationTestCase`:
+
+```{code-block} php
+protected function registerTestDoubles(AppScope $app, Config $config): void
+{
+    $app->instance(Clock::class, new FixedClock(new DateTimeImmutable('2026-03-01 09:00:00', new DateTimeZone('UTC'))));
+}
+
+public function test_each_due_reminder_is_queued_once(): void
+{
+    $db = $this->app->get(SqlLink::class);
+    $db->execute("INSERT INTO events (id, starts_at) VALUES (1, '2026-03-01 09:20:00'), (2, '2026-03-01 10:00:00')");
+
+    self::assertSame(0, $this->application->command('app:dispatch-reminders')->exitCode);
+    self::assertSame(0, $this->application->command('app:dispatch-reminders')->exitCode);
+
+    self::assertSame(1, $db->execute('SELECT id FROM kinetis_queue_jobs')->getRowCount());
+    self::assertNull($db->execute('SELECT reminder_claimed_at FROM events WHERE id = 2')->fetchRow()['reminder_claimed_at']);
+}
+```
+
+`FixedClock` is the application's test clock. Isolate `events` and
+`kinetis_queue_jobs` between tests as {doc}`testing`'s "Testing against
+a database" describes.
 
 ### At most N concurrent jobs of a type
 
