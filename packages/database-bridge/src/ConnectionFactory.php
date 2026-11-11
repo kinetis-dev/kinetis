@@ -180,7 +180,7 @@ final class ConnectionFactory
 
         // An explicit code-level poolOption wins; the connection-scoped
         // env key covers deployments tuning pool width without editing
-        // bootstrap code (see docs/performance-tuning.md for sizing).
+        // bootstrap code (see https://kinetis.dev/docs/performance-tuning.html for sizing).
         // The lower bound (>= 1) is ConnectionOptions' own job; this only
         // guards the type, so a non-int poolOption is this factory's own
         // clear error rather than an incidental TypeError from that

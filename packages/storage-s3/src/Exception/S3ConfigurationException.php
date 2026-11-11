@@ -37,6 +37,11 @@ final class S3ConfigurationException extends RuntimeException
         );
     }
 
+    public static function partialCredentials(string $idKey, string $secretKey): self
+    {
+        return new self("{$idKey} and {$secretKey} must be set together, or both left unset to use the AWS credential chain.");
+    }
+
     public static function nonPositiveTimeout(string $key): self
     {
         return new self("{$key} must be a positive number of seconds.");

@@ -234,6 +234,9 @@ application code is the same under either:
   one blocking PDO connection per process. `concurrently()` returns the
   same results, with its queries run one after another.
 
+The drivers return the same PHP types for a column within a dialect;
+{ref}`database-reference-result-types` lists them.
+
 Set the key yourself in two cases:
 
 - **AWS Lambda with the native extension.** Set `DB_DRIVER=native` only
@@ -273,8 +276,12 @@ waits on.
 Each FrankenPHP worker thread and each RoadRunner worker process builds
 its own pool of up to `DB_MAX_CONNECTIONS` connections (default 8), so
 keep the worker count times `DB_MAX_CONNECTIONS` below the database's
-`max_connections`. PDO holds one connection per process.
-{ref}`database-reference-pool-sizing` works through the arithmetic, and
+`max_connections`. PDO holds one connection per process. FrankenPHP starts
+roughly 2× the CPU cores worker threads by default
+({ref}`runtime-frankenphp-worker-threads`).
+{ref}`database-reference-pool-sizing` works through the arithmetic,
+{ref}`database-reference-connections-per-link` counts the connections a
+command-line process holds, and
 {doc}`performance-tuning` covers tuning under load.
 
 ## Options and more connections

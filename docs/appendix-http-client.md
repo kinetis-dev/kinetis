@@ -257,6 +257,16 @@ path that lets `concurrently()` overlap requests, and the one where a
 Every response an attempt abandons is released as the loop abandons it,
 so a retried request costs one connection rather than one per attempt.
 
+`attempts()` on the response returned counts the wire attempts the
+operation sent, that response's own included: `1` on a client without
+retries, or when the first answer was final. A retry that the deadline,
+a `Retry-After`, or the pacer left no room for sent nothing and is not
+counted, so the count can be lower than the number of `reserve()` calls
+a pacer saw. It is fixed when the response is created: it reads nothing
+from the transport, never throws, and still answers after `discard()`.
+A failure that throws carries no response; a `Timeout` names its
+attempt count in the exception message.
+
 (http-client-reference-ceiling)=
 
 ## Response byte ceiling

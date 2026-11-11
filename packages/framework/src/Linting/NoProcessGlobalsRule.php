@@ -25,7 +25,8 @@ use PHPStan\Rules\RuleErrorBuilder;
  * and a SAPI header never reaches the client; under PHP-FPM and
  * FrankenPHP both bypass the request and response Kinetis builds. The
  * kinds, their replacements, and how to exempt a site are documented in
- * docs/runtime-adapters.md, "Process and SAPI globals".
+ * {@link https://kinetis.dev/docs/runtime-adapters.html#process-and-sapi-globals},
+ * "Process and SAPI globals".
  *
  * Function names resolve the way PHP resolves them, through PHPStan's
  * scope and reflection: an unqualified `header()` inside a namespace that

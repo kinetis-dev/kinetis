@@ -210,7 +210,7 @@ final class AppScope implements ContainerInterface
         // Kernel. Registered rather than autowired: it holds a validated
         // int, which nothing can reflect its way to. An entry point that
         // built one itself registers that same instance, and this leaves
-        // it alone — see docs/runtime-adapters.md.
+        // it alone — see https://kinetis.dev/docs/runtime-adapters.html.
         if (!$this->has(FormLimits::class)) {
             /** @var Config $config */
             $config = $this->get(Config::class);

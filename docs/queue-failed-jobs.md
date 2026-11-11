@@ -29,10 +29,10 @@ vendor/kinetis/queue-failed-jobs/resources/migrations/create_kinetis_failed_jobs
 vendor/kinetis/queue-failed-jobs/resources/migrations/create_kinetis_failed_jobs_table.pgsql.php.stub
 ```
 
-Copy the one matching your database into your `migrations/` directory
-with a timestamp prefix, then run `vendor/bin/kinetis migrate`. When the
-records live on a named database connection (below), the stub goes in
-that connection's directory, `migrations/<name>/`.
+Copy the one matching your database and run `vendor/bin/kinetis migrate`,
+as {ref}`migrations-package-tables` describes. When the records live on a
+named database connection (below), the stub goes in that connection's
+directory, `migrations/<name>/`.
 
 ## Choose the database
 

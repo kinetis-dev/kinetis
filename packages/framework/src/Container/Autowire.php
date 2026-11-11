@@ -19,7 +19,7 @@ use ReflectionParameter;
  *
  * A class- or interface-typed parameter's declared default, or its
  * nullable type, stands in only for a dependency the container would not
- * attempt at all. See `docs/container.md` for that rule.
+ * attempt at all. See {@link https://kinetis.dev/docs/container.html} for that rule.
  */
 final class Autowire
 {

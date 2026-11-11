@@ -233,6 +233,35 @@ same database share its `kinetis_migrations` table, and each one then
 sees the other's migrations as applied migrations with no file, which
 is not supported.
 
+(migrations-package-tables)=
+## Tables packages need
+
+Three packages keep state in a table you create with a migration. Each
+ships one stub per dialect in its `resources/migrations/` directory:
+
+| Package | Table | Stub name | Connection |
+| --- | --- | --- | --- |
+| `kinetis/queue-sql` | `kinetis_queue_jobs` | `create_kinetis_queue_jobs_table` | The connection the queue runs on: the default connection unless `QUEUE_CONNECTION_NAME` names another ({doc}`queue-sql`). |
+| `kinetis/queue-failed-jobs` | `kinetis_failed_jobs` | `create_kinetis_failed_jobs_table` | `FAILED_JOBS_DB_CONNECTION_NAME`, the default connection when unset ({doc}`queue-failed-jobs`). |
+| `kinetis/session` | `kinetis_sessions` | `create_kinetis_sessions_table` | The connection `DB_CONNECTION` binds, the default connection ({doc}`session`). |
+
+A table on the default connection belongs in `migrations/`; a table on a
+named connection belongs in `migrations/<name>/`, as in
+[Several databases](#several-databases). Choose the `.mysql` or the
+`.pgsql` stub to match that connection's `DB_{NAME}_CONNECTION`
+(`DB_CONNECTION` for the default). Copy the stub under a
+`YmdHis_` timestamp prefix, without the `.stub` suffix, since migration
+discovery loads only `*.php` files:
+
+```{code-block} sh
+cp vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.pgsql.php.stub \
+   migrations/$(date +%Y%m%d%H%M%S)_create_kinetis_queue_jobs_table.php
+vendor/bin/kinetis migrate
+```
+
+Edit the copy to change a column. The ledger records a checksum of each
+applied file, so a file changed after it ran stops the next command.
+
 ## From your own code
 
 The commands run a `MigrationRunner` per connection. It takes the link it

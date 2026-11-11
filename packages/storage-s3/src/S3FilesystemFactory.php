@@ -9,6 +9,7 @@ use AsyncAws\Core\Configuration;
 use AsyncAws\Core\Credentials\ConfigurationProvider;
 use AsyncAws\Core\Credentials\ContainerProvider;
 use AsyncAws\Core\Credentials\CredentialProvider;
+use AsyncAws\Core\Credentials\Credentials;
 use AsyncAws\Core\Credentials\IniFileProvider;
 use AsyncAws\Core\Credentials\InstanceProvider;
 use AsyncAws\Core\Credentials\WebIdentityProvider;
@@ -30,14 +31,13 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  * DeclaredContentLength, so a writeStream() body goes out with the
  * `Content-Length` AsyncAws declared for it rather than chunked.
  *
- * Credentials are not read from Kinetis\Config:
- * AsyncAws resolves them from AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY,
- * the shared credentials and config files, or an IAM role on its own,
- * the standard AWS SDK convention, and a second source of truth for the
- * same thing would only compete with it.
- *
- * The chain that resolution runs through is built here rather than left
- * to AsyncAws's own default — see credentialProvider().
+ * FILESYSTEM_S3_ACCESS_KEY_ID and FILESYSTEM_S3_SECRET_ACCESS_KEY give
+ * one connection static keys of its own, for an S3-compatible service
+ * whose keys must not reach the process-wide AWS_* variables every other
+ * AWS client reads. Without them, credentials come from AsyncAws's
+ * standard chain — AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, the shared
+ * credentials and config files, or an IAM role — built here rather than
+ * left to AsyncAws's own default; see credentialProvider().
  *
  * Storage is private. The adapter is given a visibility converter whose
  * directory default is private too, so createDirectory() asks for no
@@ -72,7 +72,7 @@ final class S3FilesystemFactory
         );
         $configuration = self::configuration($config, $connection, $region);
 
-        $client = new S3Client($configuration, self::credentialProvider($transport), $transport);
+        $client = new S3Client($configuration, self::credentialProvider($config, $connection, $transport), $transport);
         $adapter = new S3Adapter(
             $client,
             $bucket,
@@ -193,6 +193,33 @@ final class S3FilesystemFactory
     }
 
     /**
+     * Scoped keys become a Credentials object handed straight to the
+     * client, never Configuration options: ConfigurationProvider would
+     * pair options with an ambient AWS_ROLE_ARN and assume that role
+     * through STS. Credentials built without an expiry date never expire,
+     * so the client signs with exactly these keys and consults nothing
+     * else.
+     */
+    private static function credentialProvider(Config $config, string $connection, HttpClientInterface $transport): CredentialProvider
+    {
+        $idKey = Config::scopedKey('FILESYSTEM_S3_ACCESS_KEY_ID', $connection);
+        $secretKey = Config::scopedKey('FILESYSTEM_S3_SECRET_ACCESS_KEY', $connection);
+
+        $id = $config->string($idKey, '');
+        $secret = $config->string($secretKey, '');
+
+        if ($id === '' && $secret === '') {
+            return self::credentialChain($transport);
+        }
+
+        if ($id === '' || $secret === '') {
+            throw S3ConfigurationException::partialCredentials($idKey, $secretKey);
+        }
+
+        return new Credentials($id, $secret);
+    }
+
+    /**
      * AsyncAws's own provider order, with one change: every provider that
      * reaches the network is handed $transport.
      * ChainProvider::createDefaultChain() builds ConfigurationProvider
@@ -209,7 +236,7 @@ final class S3FilesystemFactory
      * blocking calls inside the providers that consult them; that is
      * AsyncAws's resolution and this package does not reimplement it.
      */
-    private static function credentialProvider(HttpClientInterface $transport): CredentialProvider
+    private static function credentialChain(HttpClientInterface $transport): CredentialProvider
     {
         return new CredentialChain(
             new ConfigurationProvider($transport),

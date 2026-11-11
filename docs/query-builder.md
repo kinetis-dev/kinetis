@@ -103,7 +103,8 @@ ignored, and a missing column falls back to the parameter's default.
 forms drivers deliver, such as `"42"` for an `int`; nothing else is
 converted. Select a scalar and convert it in the constructor, or read the
 row as an array. {ref}`query-builder-reference-mapping` lists every
-admitted value and failure.
+admitted value and failure, and {ref}`database-reference-result-types`
+gives the PHP type each driver returns for each column type.
 
 ### Choosing columns
 

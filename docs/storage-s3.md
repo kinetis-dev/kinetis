@@ -33,6 +33,8 @@ optional keys:
 | `FILESYSTEM_S3_ENDPOINT` | — | An S3-compatible service such as MinIO. One origin — scheme, host and optional port — addressed path-style. |
 | `FILESYSTEM_S3_PLAINTEXT` | `false` | Allows an `http://` endpoint. |
 | `FILESYSTEM_S3_TIMEOUT` | `60` | Seconds for each S3 request. |
+| `FILESYSTEM_S3_ACCESS_KEY_ID` | — | Static access key for this connection only. Set together with the secret. |
+| `FILESYSTEM_S3_SECRET_ACCESS_KEY` | — | Secret for `FILESYSTEM_S3_ACCESS_KEY_ID`. |
 
 With `FILESYSTEM_S3_ENDPOINT` unset, requests go to AWS's regional
 endpoint, and an `AWS_ENDPOINT_URL` set in the environment for another
@@ -49,8 +51,8 @@ FILESYSTEM_S3_BUCKET=app
 FILESYSTEM_S3_REGION=us-east-1
 FILESYSTEM_S3_ENDPOINT=http://minio:9000
 FILESYSTEM_S3_PLAINTEXT=true
-AWS_ACCESS_KEY_ID=minio-user
-AWS_SECRET_ACCESS_KEY=minio-password
+FILESYSTEM_S3_ACCESS_KEY_ID=minio-user
+FILESYSTEM_S3_SECRET_ACCESS_KEY=minio-password
 ```
 
 A second connection, S3 or local, uses the scoped `FILESYSTEM_{NAME}_*`
@@ -58,11 +60,19 @@ keys described in {doc}`storage`.
 
 ## Credentials
 
-Kinetis reads no credential keys of its own. Credentials come from AWS's
-standard chain: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (or an
-`AWS_ROLE_ARN` role), web identity, the shared credentials and config
-files, ECS or EKS pod identity, then the instance role. In production,
-prefer the role your platform attaches over static keys.
+`FILESYSTEM_S3_ACCESS_KEY_ID` and `FILESYSTEM_S3_SECRET_ACCESS_KEY` give
+one connection its own static keys. The connection then signs with
+exactly those keys and consults nothing else — no `AWS_*` variable, no
+file and no role. Use them for an S3-compatible service such as MinIO,
+so its keys never sit in `AWS_ACCESS_KEY_ID`, where SQS, SES and every
+other AWS client in the process would sign with them. Set both or
+neither; one alone fails at boot.
+
+Without them, credentials come from AWS's standard chain:
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (or an `AWS_ROLE_ARN` role),
+web identity, the shared credentials and config files, ECS or EKS pod
+identity, then the instance role. On AWS in production, prefer the role
+your platform attaches over static keys.
 {doc}`appendix-storage` states the resolution order, what is cached, and
 which lookups block.
 

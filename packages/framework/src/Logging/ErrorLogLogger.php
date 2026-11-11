@@ -10,10 +10,10 @@ use Throwable;
 
 /**
  * A minimal PSR-3 logger writing through error_log() — see
- * docs/logging.md for where that lands per SAPI. AppScope::boot() binds
- * this as the default LoggerInterface in every environment, so a failure
- * reported only through the logger always leaves a trail without any
- * logging setup. A consumer-registered logger wins over this default.
+ * {@link https://kinetis.dev/docs/logging.html} for where that lands per
+ * SAPI. AppScope::boot() binds this as the default LoggerInterface in
+ * every environment, so a failure reported only through the logger
+ * always leaves a trail without any logging setup. A consumer-registered logger wins over this default.
  *
  * Renders {placeholder} context values into the message per the PSR-3
  * interpolation convention, and appends the class and file:line of a

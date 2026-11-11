@@ -63,16 +63,20 @@ FILESYSTEM_S3_REGION=us-east-1
 | `FILESYSTEM_S3_ENDPOINT` | — | S3-compatible endpoint instead of AWS (e.g. MinIO) — one origin, addressed path-style. |
 | `FILESYSTEM_S3_PLAINTEXT` | `false` | Allow an `http://` endpoint. |
 | `FILESYSTEM_S3_TIMEOUT` | `60` | Seconds per S3 request — connect, idle and transfer alike, not one deadline per operation. |
+| `FILESYSTEM_S3_ACCESS_KEY_ID` | — | Static access key for this connection only; set with the secret or not at all. |
+| `FILESYSTEM_S3_SECRET_ACCESS_KEY` | — | Secret for `FILESYSTEM_S3_ACCESS_KEY_ID`. |
 
 Every key is scoped — `FILESYSTEM_S3_BUCKET` + `backups` →
 `FILESYSTEM_BACKUPS_S3_BUCKET`. Full reference:
 [kinetis.dev/docs/config.html](https://kinetis.dev/docs/config.html).
 
-Credentials are never read from Kinetis config — AsyncAws's standard
-provider chain resolves them on its own, the usual AWS SDK convention.
-Every provider in that chain that calls AWS uses the same Revolt
-transport as the client, while the shared credentials and config files
-and any token file are read with native blocking calls. Full detail:
+With both credential keys set, the connection signs with exactly those
+keys and nothing else, so an S3-compatible service's keys stay out of
+the `AWS_*` variables other AWS clients in the process read. Without
+them, AsyncAws's standard provider chain resolves credentials. Every
+provider in that chain that calls AWS uses the same Revolt transport as
+the client, while the shared credentials and config files and any token
+file are read with native blocking calls. Full detail:
 [kinetis.dev/docs/storage-s3.html](https://kinetis.dev/docs/storage-s3.html).
 
 ## Installation

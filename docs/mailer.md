@@ -27,6 +27,10 @@ $email = new Email()
 $mailer->send($email);
 ```
 
+The sender is set on each message with `Email::from()`. There is no
+default-sender key; `MAILER_DSN` and `MAILER_TIMEOUT` are the only keys
+the package reads.
+
 ## Configuring
 
 ```{code-block} text
@@ -73,6 +77,25 @@ which can include the raw request headers — and therefore the API key
 that authenticated the send. Kinetis never reads that data; if your own
 exception handler does, do not log it.
 ```
+
+## Amazon SES
+
+Install `symfony/amazon-mailer` and use an `ses+api://` or `ses://` DSN.
+Credentials in the DSN, or a platform role (EC2 instance profile, ECS
+task role, or web identity), resolve without blocking: the credential
+requests go through the same non-blocking HTTP client as the send.
+
+Static keys combined with `AWS_ROLE_ARN` are the exception. Symfony's SES
+transport passes AsyncAws no credential provider, so AsyncAws builds its
+default chain, and that chain's `ConfigurationProvider` has no injected
+HTTP client. It assumes the role through AsyncAws's own blocking HTTP
+client at the first send and again at each credential expiry, and each
+call blocks the worker until STS answers. Prefer a platform role, or
+credentials that need no role assumption.
+
+A credential chain that resolved nothing at the first send is remembered
+until the worker restarts: AsyncAws caches the empty result, so fixing the
+environment afterwards does not recover a running worker.
 
 ## Named connections
 
@@ -134,6 +157,42 @@ rather than on the first job that sends. An application's own
 
 A slow SMTP send then occupies one queue worker's Fiber for one job
 instead of the worker handling an HTTP request.
+
+(mailer-testing)=
+## Testing
+
+`MailerInterface` is bound only when `MAILER_DSN` is set. A test that
+should send nothing can set `'MAILER_DSN' => 'null://null'` in
+`configOverrides()` (see {doc}`testing`), which installs Symfony's
+`NullTransport`. To assert on what the code sent, replace the binding in
+`registerTestDoubles()` with a recording mailer:
+
+```{code-block} php
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+use Symfony\Component\Mailer\Envelope;
+use Symfony\Component\Mailer\MailerInterface;
+use Symfony\Component\Mime\RawMessage;
+
+final class RecordingMailer implements MailerInterface
+{
+    /** @var list<RawMessage> */
+    public array $sent = [];
+
+    public function send(RawMessage $message, ?Envelope $envelope = null): void
+    {
+        $this->sent[] = $message;
+    }
+}
+
+protected function registerTestDoubles(AppScope $app, Config $config): void
+{
+    $app->instance(MailerInterface::class, new RecordingMailer());
+}
+```
+
+Symfony Mailer ships no in-memory transport, so the recorder is the
+application's own class.
 
 ## See also
 

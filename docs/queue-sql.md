@@ -45,8 +45,9 @@ vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.my
 vendor/kinetis/queue-sql/resources/migrations/create_kinetis_queue_jobs_table.pgsql.php.stub
 ```
 
-Copy the one matching your database into your `migrations/` directory
-with a timestamp prefix, then run `vendor/bin/kinetis migrate`.
+Copy the one matching your database and run `vendor/bin/kinetis migrate`,
+as {ref}`migrations-package-tables` describes; with the queue on a named
+connection, the stub goes in that connection's directory.
 [SQL mechanisms](appendix-queue.md#sql) describes the columns the backend
 runs on.
 

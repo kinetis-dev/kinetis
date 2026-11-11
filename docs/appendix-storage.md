@@ -417,7 +417,13 @@ while the sweep runs can survive it.
 
 ## S3 credential resolution
 
-Credentials resolve through AsyncAws's standard providers, in its
+A connection with `FILESYSTEM_S3_ACCESS_KEY_ID` and
+`FILESYSTEM_S3_SECRET_ACCESS_KEY` set signs every request with exactly
+those keys. They never expire and are never combined with an
+`AWS_ROLE_ARN`, a profile or any other ambient source, and nothing below
+applies to that connection.
+
+Otherwise, credentials resolve through AsyncAws's standard providers, in its
 standard order: environment variables (including the STS assume-role that
 `AWS_ROLE_ARN` selects), web identity, the shared credentials and config
 files, ECS or EKS pod identity, then IMDS. The first that answers with
