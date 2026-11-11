@@ -183,10 +183,53 @@ $reports = $http
 {ref}`http-client-reference-deadline` has the exact deadline and retry
 behavior, and {ref}`http-client-reference-ceiling` the byte ceiling.
 
+(http-client-pacing)=
+
+### Pace requests to a host
+
+`withPacer()` spaces the attempts a client sends, for example to keep
+every worker process together under a third-party API's rate limit. It
+takes an implementation of `Kinetis\RevoltHttpClient\RequestPacer`.
+Kinetis ships none; {ref}`recipes-pacing` has implementations over
+PostgreSQL, MySQL and Redis.
+
+```{code-block} php
+$carrier = new Http()
+    ->withBaseUrl('https://api.carrier.example/v2')
+    ->withRetries(3)
+    ->withPacer($pacer);
+```
+
+Before every wire attempt, retries included, the client calls
+`$pacer->reserve($origin, $maxWaitSeconds)` with the request's origin
+(`https://api.carrier.example` above) and what is left of the timeout,
+then waits the seconds it returns inside that timeout. A negative wait
+means now. A client without retries paces its one attempt too.
+
+- **First attempt.** `null`, or a wait that does not fit in what is left
+  of the timeout, throws `HttpRequestException` with the `Timeout`
+  category, and nothing is sent.
+- **Retry.** The slot is reserved only once the backoff and
+  `Retry-After` rules above have decided to retry, and the retry waits
+  for the later of its backoff and its slot. When the pacer returns
+  `null`, or that wait does not fit in what is left of the timeout, the
+  retries end as they do for a `Retry-After` that does not fit: the last
+  response is returned, or the transport failure is thrown when no
+  response arrived.
+- **Unused slots.** A slot reserved for a retry that then does not fit is
+  not given back, so the next caller waits behind it.
+- **Failures.** An exception from `reserve()` passes through unchanged,
+  after the client releases any response it holds.
+
+`reserve()` runs on the calling Fiber, so its I/O must suspend rather
+than block. One pacer serves every request for the worker's lifetime and
+holds no request state.
+
 ## When a request fails
 
-`HttpRequestException` is the only exception the client throws. Branch
-on its `category`:
+`HttpRequestException` is the only exception the client throws; an
+exception from a pacer passes through unchanged. Branch on its
+`category`:
 
 | Category | Meaning |
 |---|---|

@@ -235,6 +235,10 @@ server's `Retry-After` is never shortened to fit: a 429 asking for 30
 seconds under a 10-second budget is returned after one attempt, its
 `Retry-After` still readable with `header()`.
 
+A client with `withPacer()` also waits for a send slot before every
+attempt, inside the same deadline; {ref}`http-client-pacing` states how
+a slot that does not come in time ends the operation or the retries.
+
 **Every other method is sent once**, `POST` and `PATCH` included, even
 by a client with retries configured. Neither a transport failure nor a
 retryable status proves such a request was not applied: the first leaves
@@ -362,7 +366,8 @@ neither path cancels a response that is already complete.
 
 One exception type, `Kinetis\RevoltHttpClient\Exception\HttpRequestException`,
 covers everything this client throws, across validation, transport,
-timeout, status, and decoding. Its `category` is an `HttpFailure` chosen
+timeout, status, and decoding. An exception from a `withPacer()` pacer
+is the pacer's own and passes through unchanged. Its `category` is an `HttpFailure` chosen
 at the point of failure from the fixed list in the
 {doc}`revolt-http-client` guide, which also states what `Transport` and
 `Timeout` mean for a write. `getMessage()` is prose. `status` is the

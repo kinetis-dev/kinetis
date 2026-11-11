@@ -254,7 +254,8 @@ Run as many `queue:work` processes as you need, on as many machines,
 against the same backend. They coordinate nothing beyond the queue names
 they watch. `QUEUE_POLL_TIMEOUT` (default `5`, a positive number of
 seconds) is how long an idle worker waits for a job before it checks for
-a stop signal again.
+a stop signal again. To keep one job per key, or to cap how many jobs of
+one type run at once, see {ref}`recipes-coordination`.
 
 ## Retries and failures
 

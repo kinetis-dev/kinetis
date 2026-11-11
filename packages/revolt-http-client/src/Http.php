@@ -92,6 +92,8 @@ final class Http
 
     private bool $sendAsForm = false;
 
+    private ?RequestPacer $pacer = null;
+
     private readonly HttpClientInterface $transport;
 
     public function __construct(?HttpClientInterface $transport = null)
@@ -197,6 +199,20 @@ final class Http
     {
         $clone = clone $this;
         $clone->retries = Preflight::retries($times);
+
+        return $clone;
+    }
+
+    /**
+     * Asks $pacer for a send slot before every wire attempt, retries
+     * included, and waits for it inside the one operation deadline. No
+     * slot in time for the first attempt is a timeout; none in time for
+     * a retry ends the retries as a wait that does not fit does.
+     */
+    public function withPacer(RequestPacer $pacer): self
+    {
+        $clone = clone $this;
+        $clone->pacer = $pacer;
 
         return $clone;
     }
@@ -334,6 +350,18 @@ final class Http
     ): HttpResponse {
         $budget = new ResponseBudget($method, $origin, $timeout, $this->maxResponseBytes);
 
+        if ($this->pacer !== null) {
+            $slot = self::reserveSlot($this->pacer, $origin, $budget);
+
+            if ($slot === null || $slot >= $budget->remaining()) {
+                throw $budget->timedOut();
+            }
+
+            if ($slot > 0.0) {
+                self::pause($slot);
+            }
+        }
+
         while (true) {
             if ($budget->expired()) {
                 throw $budget->timedOut();
@@ -378,9 +406,38 @@ final class Http
                 return $status === null ? throw $budget->transportFailure() : $response;
             }
 
+            // The slot is reserved while the response is still open, so a
+            // retry that cannot be paced in time returns it as above.
+            if ($this->pacer !== null) {
+                try {
+                    $slot = self::reserveSlot($this->pacer, $origin, $budget);
+                } catch (Throwable $failure) {
+                    $response->discard();
+
+                    throw $failure;
+                }
+
+                if ($slot === null || max($wait, $slot) >= $budget->remaining()) {
+                    return $status === null ? throw $budget->transportFailure() : $response;
+                }
+
+                $wait = max($wait, $slot);
+            }
+
             $response->discard();
             self::pause($wait);
         }
+    }
+
+    /**
+     * The pacer's wait for $origin's next slot, a negative answer being
+     * now; null when none comes within what is left of the budget.
+     */
+    private static function reserveSlot(RequestPacer $pacer, string $origin, ResponseBudget $budget): ?float
+    {
+        $slot = $pacer->reserve($origin, $budget->remaining());
+
+        return $slot === null ? null : max(0.0, $slot);
     }
 
     /**

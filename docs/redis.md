@@ -158,7 +158,8 @@ the server; verification is never relaxed for a discovered node.
 `kinetis/redis` client yourself: {ref}`redis-reference-client` shows the
 wiring and what each failure means, and the
 [`kinetis/redis` README](https://github.com/kinetis-dev/redis#readme)
-covers standalone use.
+covers standalone use. {ref}`recipes-pacing` uses a Lua script on that
+client to pace requests to a third-party host.
 
 ## See also
 
