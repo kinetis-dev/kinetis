@@ -497,9 +497,10 @@ services:
 ```
 
 `migrate` runs once and gates the app and the worker, as in the
-tutorial's [Storing pings](tutorial.md#storing-pings-mysql-migrations-and-the-query-builder);
-the tutorial also explains the `pg_isready -h 127.0.0.1` probe. The
-worker and `migrate` disable the inherited FrankenPHP healthcheck, per
+tutorial's [Storing pings](tutorial.md#storing-pings-mysql-migrations-and-the-query-builder),
+whose {ref}`healthcheck note <tutorial-database-healthcheck>` explains
+the `pg_isready -h 127.0.0.1` probe. The worker and `migrate` disable
+the inherited FrankenPHP healthcheck, per
 [Command-line services on the same image](#command-line-services-on-the-same-image).
 Stop signal and grace period for the worker are in {doc}`queue`'s
 "Deploys and restarts".
@@ -607,9 +608,10 @@ fetches the files again and recreates the containers.
 stdout and stderr to the log group. Under FrankenPHP worker mode and in
 console commands, the default logger writes to stderr unless PHP's
 `error_log` names a file ({doc}`logging`), so the app, the worker and
-`migrate` reach CloudWatch without a logger of their own. The Docker daemon, not the container, sends the logs with
-the instance role's credentials, so the role needs `logs:CreateLogStream`
-and `logs:PutLogEvents`, plus `logs:CreateLogGroup` for
+`migrate` reach CloudWatch without a logger of their own. The Docker
+daemon, not the container, sends the logs with the instance role's
+credentials, so the role needs `logs:CreateLogStream` and
+`logs:PutLogEvents`, plus `logs:CreateLogGroup` for
 `awslogs-create-group`.
 
 ## Recycling persistent workers

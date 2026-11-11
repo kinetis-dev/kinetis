@@ -302,6 +302,8 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Non-goal**: treating a local or single-process run as proof of a
   managed platform's own process lifecycle guarantees.
 
+(recipes-clock)=
+
 ## A controllable clock
 
 - **Guides**: {doc}`testing`, "Replacing what a test should not reach".
@@ -643,7 +645,6 @@ CREATE TABLE events (
 ```{code-block} php
 namespace App\Console;
 
-use App\Clock;
 use App\Jobs\SendEventReminder;
 use DateTimeZone;
 use Kinetis\Console\Attributes\Command;
@@ -651,6 +652,7 @@ use Kinetis\Persistence\Contract\SqlLink;
 use Kinetis\Persistence\Contract\SqlTransaction;
 use Kinetis\Persistence\TransactionGuard;
 use Kinetis\QueueSql\SqlQueue;
+use Psr\Clock\ClockInterface;
 
 final readonly class DispatchEventReminders
 {
@@ -658,7 +660,7 @@ final readonly class DispatchEventReminders
         private SqlLink $db,
         private TransactionGuard $transactions,
         private SqlQueue $queue,
-        private Clock $clock,
+        private ClockInterface $clock,
     ) {}
 
     #[Command('app:dispatch-reminders', description: 'Queues a reminder for each event starting within 30 minutes')]
@@ -690,9 +692,8 @@ final readonly class DispatchEventReminders
 }
 ```
 
-`Clock` and `SendEventReminder` are the application's own: the clock is
-the injectable one from "A controllable clock", and the job is an
-ordinary {doc}`queue` job. `SqlQueue` must be registered under its own
+The clock is the `ClockInterface` binding from {ref}`recipes-clock`,
+and `SendEventReminder` is an ordinary {doc}`queue` job. `SqlQueue` must be registered under its own
 class as {doc}`queue-sql`'s "Enqueueing inside a transaction" shows.
 
 - **One claim per row.** The conditional `UPDATE` affects one row for
@@ -722,7 +723,7 @@ run it twice to prove the claim. In an `ApplicationTestCase`:
 ```{code-block} php
 protected function registerTestDoubles(AppScope $app, Config $config): void
 {
-    $app->instance(Clock::class, new FixedClock(new DateTimeImmutable('2026-03-01 09:00:00', new DateTimeZone('UTC'))));
+    $app->instance(ClockInterface::class, new FixedClock(new DateTimeImmutable('2026-03-01 09:00:00', new DateTimeZone('UTC'))));
 }
 
 public function test_each_due_reminder_is_queued_once(): void
@@ -738,7 +739,7 @@ public function test_each_due_reminder_is_queued_once(): void
 }
 ```
 
-`FixedClock` is the application's test clock. Isolate `events` and
+`FixedClock` is the application's test `ClockInterface`. Isolate `events` and
 `kinetis_queue_jobs` between tests as {doc}`testing`'s "Testing against
 a database" describes.
 
