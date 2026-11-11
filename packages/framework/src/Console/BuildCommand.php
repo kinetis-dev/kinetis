@@ -28,6 +28,7 @@ final readonly class BuildCommand
 {
     public function __construct(
         private ProjectRoot $projectRoot,
+        private Output $output,
     ) {}
 
     #[Command('build', description: 'Compiles routes, MCP tools/resources, commands, and event listeners ahead of time', bootstrap: false)]
@@ -56,7 +57,7 @@ final readonly class BuildCommand
         // nothing to report as success.
         $store->write($compiled);
 
-        fwrite(STDOUT, "Compiled routes, MCP tools/resources, commands, and event listeners written to {$store->path()}\n");
+        $this->output->line("Compiled routes, MCP tools/resources, commands, and event listeners written to {$store->path()}");
 
         return 0;
     }

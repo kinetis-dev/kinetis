@@ -32,9 +32,14 @@ namespace App\Console;
 
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 
 final readonly class MaintenanceController
 {
+    public function __construct(
+        private Output $output,
+    ) {}
+
     #[Command('app:cleanup-sessions', description: 'Deletes sessions older than 30 days')]
     public function cleanupSessions(): void
     {
@@ -47,7 +52,7 @@ final readonly class MaintenanceController
         $email = $arguments->get(0);
 
         if ($email === null) {
-            fwrite(STDERR, "Usage: app:send-report <email>\n");
+            $this->output->error('Usage: app:send-report <email>');
             return 1;
         }
 
@@ -88,6 +93,9 @@ mailer, ...) is constructor-injected, exactly like a controller.
 `CommandArguments` splits whatever followed the command's own name into
 positional values (`get(0)`, `get(1)`, ...) and `--key=value`/bare
 `--flag` options (`option('key')`, `hasOption('flag')`).
+
+Command output goes through the injected `Kinetis\Console\Output`; see
+[Writing output](#writing-output).
 
 A command's own return value becomes the process's exit code — an `int`
 is used directly; `void`/`null` means success (`0`). This is the actual
@@ -148,6 +156,77 @@ alive. The class plus the command is what locates it there.
 MCP tools and resources (see {doc}`mcp`) and HTTP routes (see
 {doc}`routing-validation`) work the same way — discovered anywhere under
 your own PSR-4 roots, with no directory convention required.
+
+## Writing output
+
+Constructor-inject `Kinetis\Console\Output` and write through it rather
+than to `STDOUT`/`STDERR` directly:
+
+```{code-block} php
+use Kinetis\Console\Attributes\Command;
+use Kinetis\Console\Color;
+use Kinetis\Console\Output;
+
+final readonly class ReportCommand
+{
+    public function __construct(
+        private Output $output,
+        private OrderRepository $orders,
+    ) {}
+
+    #[Command('app:orders', description: 'Lists open orders')]
+    public function run(): int
+    {
+        $open = $this->orders->open();
+
+        if ($open === []) {
+            $this->output->error('No open orders.', Color::Yellow);
+
+            return 1;
+        }
+
+        $this->output->table(
+            ['Id', 'Customer', 'Total'],
+            array_map(fn (Order $order): array => [$order->id, $order->customer, $order->total], $open),
+        );
+        $this->output->line(count($open) . ' open', Color::Green);
+
+        return 0;
+    }
+}
+```
+
+| Method | Stream | Behaviour |
+| --- | --- | --- |
+| `line(string $text = '', ?Color $color = null)` | stdout | Writes the text and a newline. |
+| `write(string $text)` | stdout | Writes exactly these bytes — no newline, never coloured. For a document another program parses, such as JSON. |
+| `error(string $text, ?Color $color = null)` | stderr | Writes the text and a newline. Not coloured unless you pass a colour. |
+| `table(array $headers, array $rows)` | stdout | A header row, a dashed rule, then the rows; each column space-padded to its widest cell (counted in UTF-8 characters), columns separated by two spaces, no borders. Headers are strings; a cell is a `string`, `int`, `float`, or `null` for an empty cell. |
+
+Stdout carries the command's result: what a script pipes into another
+program or a file. Stderr carries everything else — usage errors,
+warnings, failures — so a caller redirecting stdout still sees them, and
+a document on stdout is never interleaved with a diagnostic. A command
+that rejects its arguments writes the reason with `error()` and returns
+a non-zero exit code.
+
+`Kinetis\Console\Color` has five cases: `Green`, `Yellow`, `Red`, `Cyan`
+and `Gray`, each applied to one whole line. `bin/kinetis` enables colour
+separately for stdout and stderr, only when that stream is a terminal and
+`NO_COLOR` is unset or empty (see [no-color.org](https://no-color.org)).
+Redirected to a file, piped to another program, or captured by a log
+collector, a stream receives the plain text without escape codes.
+Output writes text as given; it does not escape terminal control
+characters in data that came from outside the application.
+
+`bin/kinetis` binds one `Output` on the request scope it creates for each
+command, so it reaches every command whether or not it declares
+`bootstrap: false`. It is not bound on `AppScope`: an application-scoped
+service, or a queue job's own scope, does not receive one. Output never
+closes the streams it writes to.
+
+To run a command from a test and assert on its exit code and both
+streams, see [Testing a command](testing.md#testing-a-command).
 
 ## Long-running commands and signals
 
@@ -438,6 +517,11 @@ writes anything. Every invocation is a fresh, live discovery of your
 current source, regardless of `APP_ENV`, so it always reflects your code
 exactly as it stands right now, not whatever a stale compiled cache
 happens to hold.
+
+To read the middleware your `bootstrap.php` registers, the command boots
+its own application scope and disposes it once the listing is written. If
+only that disposal fails, the listing stands, stderr names the class of
+what was thrown, and the exit code is `70`.
 
 The global middleware section lists the exact order requests run in:
 `SecurityHeadersMiddleware`, a registered `CorsMiddleware`,

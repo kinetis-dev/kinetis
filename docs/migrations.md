@@ -82,7 +82,9 @@ vendor/bin/kinetis migrate:status    # lists every migration with its applied/pe
 ```
 
 The commands read the same `DB_*` keys as the application
-({doc}`persistence`) from the environment or `.env`:
+({doc}`persistence`) from the environment or `.env`; under
+`TestApplication::command()` they read the test's configuration
+overrides instead (see [Testing a command](testing.md#testing-a-command)):
 
 ```{code-block} text
 DB_CONNECTION=mysql   # or "pgsql" — no default
@@ -211,9 +213,9 @@ With more than one connection, `migrate` first checks every one of them
 the way `migrate:status` does: its `DB_*` keys, its session, and its
 ledger against its directory. An unconfigured or unreachable connection,
 or one whose ledger fails the check, stops the run before any migration's
-`up()`, and `migrate` prints that connection's `Connection: <name>` line
-before the error. A check that passes prints nothing. Each connection
-checks again under its own lock when its turn comes.
+`up()`, and `migrate` writes that connection's `Connection: <name>` line
+to stderr before the error. A check that passes prints nothing. Each
+connection checks again under its own lock when its turn comes.
 
 A failure after that, such as a migration's `up()` throwing or a lock
 timeout, stops the run at that connection. The connections before it

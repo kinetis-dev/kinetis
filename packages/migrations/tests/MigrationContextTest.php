@@ -14,6 +14,7 @@ use Kinetis\Migrations\Tests\Fixtures\FakeDatabase;
 use Kinetis\Migrations\Tests\Fixtures\FakeDatabaseLink;
 use Kinetis\Persistence\Driver\PdoMysqlClient;
 use Kinetis\Persistence\Driver\PdoPgsqlClient;
+use Kinetis\Runtime\ProjectRoot;
 use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -64,14 +65,20 @@ final class MigrationContextTest extends TestCase
     }
 
     /**
-     * The link detect() builds comes from kinetis/database-bridge's
+     * The link forProject() builds comes from kinetis/database-bridge's
      * single-session policy, which reports it through Kinetis telemetry,
      * and is closed once the runner is done with it.
+     *
+     * The process environment and the Composer bin directory point
+     * elsewhere on purpose: the context reads the Config and ProjectRoot
+     * the entry point bound — a test's overrides included — never the
+     * environment itself. Read from the environment, the selection below
+     * would be refused and the dialect would be the wrong one.
      *
      * @param class-string $expected
      */
     #[DataProvider('dialects')]
-    public function test_detect_runs_on_a_single_session_pdo_client_even_under_db_driver_native(string $dialect, string $expected): void
+    public function test_for_project_runs_on_the_injected_config_with_a_single_session_pdo_client_even_under_db_driver_native(string $dialect, string $expected): void
     {
         $original = [];
 
@@ -80,13 +87,21 @@ final class MigrationContextTest extends TestCase
         }
 
         $composerBinDir = $GLOBALS['_composer_bin_dir'] ?? null;
-        $GLOBALS['_composer_bin_dir'] = $this->projectRoot . '/vendor/bin';
-        self::setEnvironment(['DB_CONNECTION' => $dialect, 'DB_DRIVER' => 'native', 'DB_PASSWORD' => 'secret', 'MIGRATE_CONNECTION_NAME' => false]);
+        $GLOBALS['_composer_bin_dir'] = $this->projectRoot . '/elsewhere/vendor/bin';
+        self::setEnvironment([
+            'DB_CONNECTION' => $dialect === 'mysql' ? 'pgsql' : 'mysql',
+            'DB_DRIVER' => 'pdo',
+            'DB_PASSWORD' => 'environment',
+            'MIGRATE_CONNECTION_NAME' => 'Environment',
+        ]);
 
         try {
-            $context = MigrationContext::detect();
-            $link = $context->run('default', $this->migrations, static fn (MigrationRunner $runner): object => self::linkOf($runner));
+            $context = MigrationContext::forProject(
+                new ProjectRoot($this->projectRoot),
+                new Config(['DB_CONNECTION' => $dialect, 'DB_DRIVER' => 'native', 'DB_PASSWORD' => 'secret']),
+            );
             self::assertSame(['default' => $this->migrations], $context->partitions(new CommandArguments([], [])));
+            $link = $context->run('default', $this->migrations, static fn (MigrationRunner $runner): object => self::linkOf($runner));
         } finally {
             $GLOBALS['_composer_bin_dir'] = $composerBinDir;
             self::setEnvironment($original);

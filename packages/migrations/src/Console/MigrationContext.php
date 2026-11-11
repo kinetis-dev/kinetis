@@ -27,7 +27,9 @@ use RuntimeException;
  * MIGRATE_CONNECTION_NAME; with neither, every partition is selected,
  * default first.
  *
- * These commands declare `bootstrap: false`: they read DB_* directly
+ * These commands declare `bootstrap: false`: they read DB_* from the
+ * Config the entry point bound — the environment and .env under
+ * bin/kinetis, the test's overrides under TestApplication::command() —
  * and need none of the application's own wiring, so they run in bare
  * contexts (CI, an init container) with nothing but environment
  * variables.
@@ -54,7 +56,7 @@ final readonly class MigrationContext
         private Closure $connect,
     ) {}
 
-    public static function detect(): self
+    public static function forProject(ProjectRoot $projectRoot, Config $config): self
     {
         // One session for the whole run, whatever DB_DRIVER says: the
         // advisory lock is scoped to that session, so a client that
@@ -62,8 +64,8 @@ final readonly class MigrationContext
         // migrations without holding it. These commands are strictly
         // serial, and blocking on a query costs them nothing.
         return new self(
-            ProjectRoot::detect(__DIR__ . '/..') . '/migrations',
-            Config::fromEnvironment(),
+            $projectRoot->path . '/migrations',
+            $config,
             ConnectionFactory::singleSession(...),
         );
     }

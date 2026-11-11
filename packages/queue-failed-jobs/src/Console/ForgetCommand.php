@@ -7,6 +7,7 @@ namespace Kinetis\QueueFailedJobs\Console;
 use InvalidArgumentException;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\QueueFailedJobs\SqlFailedJobStore;
 
 /**
@@ -15,10 +16,9 @@ use Kinetis\QueueFailedJobs\SqlFailedJobStore;
  */
 final readonly class ForgetCommand
 {
-    /** @param resource $output */
     public function __construct(
         private SqlFailedJobStore $store,
-        private mixed $output = \STDOUT,
+        private Output $output,
     ) {}
 
     #[Command('queue:forget', description: 'Delete a failed job without retrying it: queue:forget <id>')]
@@ -31,13 +31,13 @@ final readonly class ForgetCommand
         }
 
         if ($this->store->find($id) === null) {
-            fwrite($this->output, "No failed job \"{$id}\".\n");
+            $this->output->error("No failed job \"{$id}\".");
 
             return 1;
         }
 
         $this->store->forget($id);
-        fwrite($this->output, "Forgot failed job \"{$id}\".\n");
+        $this->output->line("Forgot failed job \"{$id}\".");
 
         return 0;
     }

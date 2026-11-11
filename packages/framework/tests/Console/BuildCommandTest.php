@@ -9,6 +9,7 @@ use Kinetis\Cache\CacheStore;
 use Kinetis\Cache\Exception\InvalidCacheArtifactException;
 use Kinetis\Config\Config;
 use Kinetis\Console\BuildCommand;
+use Kinetis\Console\Output;
 use Kinetis\Container\AppScope;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Reflection\Exception\UnsupportedDefaultValueException;
@@ -33,6 +34,39 @@ final class BuildCommandTest extends TestCase
         $this->removeDirectory($this->projectRoot);
     }
 
+    /** @var resource */
+    private mixed $stdout;
+
+    /** @var resource */
+    private mixed $stderr;
+
+    private function command(): BuildCommand
+    {
+        return new BuildCommand(new ProjectRoot($this->projectRoot), $this->capturingOutput());
+    }
+
+    private function capturingOutput(): Output
+    {
+        $stdout = fopen('php://memory', 'w+');
+        $stderr = fopen('php://memory', 'w+');
+        self::assertNotFalse($stdout);
+        self::assertNotFalse($stderr);
+        $this->stdout = $stdout;
+        $this->stderr = $stderr;
+
+        return new Output($stdout, $stderr, false, false);
+    }
+
+    /**
+     * @param resource $stream
+     */
+    private static function contents(mixed $stream): string
+    {
+        rewind($stream);
+
+        return (string) stream_get_contents($stream);
+    }
+
     private function cacheStore(): CacheStore
     {
         return new CacheStore($this->projectRoot . '/.kinetis-cache');
@@ -40,9 +74,14 @@ final class BuildCommandTest extends TestCase
 
     public function test_writes_a_loadable_artifact_and_returns_success(): void
     {
-        $exitCode = new BuildCommand(new ProjectRoot($this->projectRoot))->run();
+        $exitCode = $this->command()->run();
 
         self::assertSame(0, $exitCode);
+        self::assertSame(
+            "Compiled routes, MCP tools/resources, commands, and event listeners written to {$this->cacheStore()->path()}\n",
+            self::contents($this->stdout),
+        );
+        self::assertSame('', self::contents($this->stderr));
 
         $loaded = $this->cacheStore()->load();
         self::assertNotNull($loaded);
@@ -59,6 +98,7 @@ final class BuildCommandTest extends TestCase
         BootSequence::run($app, $this->projectRoot, new Config([]), new EventListenerRegistry(), [], [], runBootstrap: false);
         $app->boot();
         $scope = $app->createRequestScope();
+        $scope->instance(Output::class, $this->capturingOutput());
 
         try {
             self::assertSame(0, $scope->get(BuildCommand::class)->run());
@@ -77,7 +117,7 @@ final class BuildCommandTest extends TestCase
      */
     public function test_a_second_build_replaces_the_artifact_in_place(): void
     {
-        $command = new BuildCommand(new ProjectRoot($this->projectRoot));
+        $command = $this->command();
         $command->run();
 
         self::assertSame(0, $command->run());
@@ -100,7 +140,7 @@ final class BuildCommandTest extends TestCase
     {
         $namespace = $this->writeEnumDefaultFixture();
 
-        self::assertSame(0, new BuildCommand(new ProjectRoot($this->projectRoot))->run());
+        self::assertSame(0, $this->command()->run());
 
         $plan = $this->cacheStore()->load()?->http->hydrationPlans["{$namespace}\\SearchRequest"];
 
@@ -123,7 +163,7 @@ final class BuildCommandTest extends TestCase
      */
     public function test_a_failed_rebuild_leaves_the_published_artifact_loadable_and_unchanged(): void
     {
-        $command = new BuildCommand(new ProjectRoot($this->projectRoot));
+        $command = $this->command();
         $command->run();
 
         $before = $this->cacheStore()->load();
@@ -154,7 +194,7 @@ final class BuildCommandTest extends TestCase
      */
     public function test_a_plugin_rejecting_its_own_compiled_data_fails_the_build_and_publishes_nothing(): void
     {
-        $command = new BuildCommand(new ProjectRoot($this->projectRoot));
+        $command = $this->command();
         $command->run();
 
         $before = (string) file_get_contents($this->cacheStore()->path());
@@ -188,7 +228,7 @@ final class BuildCommandTest extends TestCase
 
         $this->installDiscoveryPackage(CountingCacheableDiscovery::class);
 
-        self::assertSame(0, new BuildCommand(new ProjectRoot($this->projectRoot))->run());
+        self::assertSame(0, $this->command()->run());
         self::assertSame(1, CountingCacheableDiscovery::$constructions);
     }
 

@@ -8,6 +8,7 @@ use InvalidArgumentException;
 use Kinetis\Config\Config;
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\Container\RequestScope;
 use Kinetis\QueueFailedJobs\FailedJobRetrier;
 use Kinetis\QueueFailedJobs\RetryStatus;
@@ -23,12 +24,11 @@ final class RetryCommand
 {
     private readonly FailedJobRetrier $retrier;
 
-    /** @param resource $output */
     public function __construct(
         SqlFailedJobStore $store,
         RequestScope $scope,
         Config $config,
-        private readonly mixed $output = \STDOUT,
+        private readonly Output $output,
     ) {
         // Its own instance rather than the bound one: a named connection's
         // queue is built once per run, as `queue:work --connection` builds it.
@@ -55,25 +55,26 @@ final class RetryCommand
         $retried = 0;
 
         foreach ($results as $result) {
-            $this->line(match ($result->status) {
-                RetryStatus::Retried => "Retried \"{$result->id}\" ({$result->class}) onto queue \"{$result->queue}\".",
-                RetryStatus::NotFound => "No failed job \"{$result->id}\".",
-                RetryStatus::Failed => "Could not retry \"{$result->id}\" ({$result->class}): {$result->reason}",
-            });
+            switch ($result->status) {
+                case RetryStatus::Retried:
+                    $this->output->line("Retried \"{$result->id}\" ({$result->class}) onto queue \"{$result->queue}\".");
+                    $retried++;
 
-            if ($result->status === RetryStatus::Retried) {
-                $retried++;
+                    break;
+                case RetryStatus::NotFound:
+                    $this->output->error("No failed job \"{$result->id}\".");
+
+                    break;
+                case RetryStatus::Failed:
+                    $this->output->error("Could not retry \"{$result->id}\" ({$result->class}): {$result->reason}");
+
+                    break;
             }
         }
 
         $failed = \count($results) - $retried;
-        $this->line("Retried {$retried} failed job(s); {$failed} could not be retried.");
+        $this->output->line("Retried {$retried} failed job(s); {$failed} could not be retried.");
 
         return $failed === 0 ? 0 : 1;
-    }
-
-    private function line(string $text): void
-    {
-        fwrite($this->output, $text . "\n");
     }
 }

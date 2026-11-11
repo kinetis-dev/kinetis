@@ -7,17 +7,18 @@ namespace Kinetis\QueueFailedJobs\Tests\Console;
 use InvalidArgumentException;
 use Kinetis\Console\CommandArguments;
 use Kinetis\QueueFailedJobs\Console\ListCommand;
+use Kinetis\QueueFailedJobs\Tests\Fixtures\CommandOutput;
 
 final class ListCommandTest extends CommandTestCase
 {
     public function test_a_sensitive_argument_is_printed_redacted_and_the_rest_as_stored(): void
     {
         $id = $this->store->record(self::failedJob());
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
-        $exit = new ListCommand($this->store, $output)->run(CommandArguments::parse([]));
+        $exit = new ListCommand($this->store, $output->output)->run(CommandArguments::parse([]));
 
-        $printed = self::contents($output);
+        $printed = $output->takeStdout();
         self::assertSame(0, $exit);
         self::assertStringContainsString($id, $printed);
         self::assertStringContainsString('args: {"userId":7,"token":"[redacted]"}', $printed);
@@ -30,11 +31,11 @@ final class ListCommandTest extends CommandTestCase
     public function test_a_class_that_no_longer_autoloads_prints_every_argument_redacted(): void
     {
         $this->store->record(self::failedJob(class: 'App\Jobs\Removed', args: ['email' => 'a@example.com']));
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
-        new ListCommand($this->store, $output)->run(CommandArguments::parse([]));
+        new ListCommand($this->store, $output->output)->run(CommandArguments::parse([]));
 
-        $printed = self::contents($output);
+        $printed = $output->takeStdout();
         self::assertStringContainsString('args: {"email":"[redacted]"}', $printed);
         self::assertStringNotContainsString('a@example.com', $printed);
     }
@@ -44,11 +45,11 @@ final class ListCommandTest extends CommandTestCase
         $this->store->record(self::failedJob(queue: 'third', failedAt: 300));
         $this->store->record(self::failedJob(queue: 'first', failedAt: 100));
         $this->store->record(self::failedJob(queue: 'second', failedAt: 200));
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
-        new ListCommand($this->store, $output)->run(CommandArguments::parse(['--limit=2']));
+        new ListCommand($this->store, $output->output)->run(CommandArguments::parse(['--limit=2']));
 
-        $printed = self::contents($output);
+        $printed = $output->takeStdout();
         self::assertLessThan(strpos($printed, 'queue: second'), strpos($printed, 'queue: first'));
         self::assertStringNotContainsString('queue: third', $printed);
     }
@@ -58,23 +59,26 @@ final class ListCommandTest extends CommandTestCase
         $this->store->record(self::failedJob(connection: null, queue: 'bound'));
         $this->store->record(self::failedJob(connection: 'jobs', queue: 'named'));
 
-        $bound = self::memoryStream();
-        new ListCommand($this->store, $bound)->run(CommandArguments::parse(['--bound']));
-        $named = self::memoryStream();
-        new ListCommand($this->store, $named)->run(CommandArguments::parse(['--connection=jobs']));
+        $bound = new CommandOutput();
+        new ListCommand($this->store, $bound->output)->run(CommandArguments::parse(['--bound']));
+        $named = new CommandOutput();
+        new ListCommand($this->store, $named->output)->run(CommandArguments::parse(['--connection=jobs']));
 
-        self::assertStringContainsString('queue: bound', self::contents($bound));
-        self::assertStringNotContainsString('queue: named', self::contents($bound));
-        self::assertStringContainsString('connection: jobs  queue: named', self::contents($named));
-        self::assertStringNotContainsString('queue: bound', self::contents($named));
+        $boundText = $bound->takeStdout();
+        $namedText = $named->takeStdout();
+        self::assertStringContainsString('queue: bound', $boundText);
+        self::assertStringNotContainsString('queue: named', $boundText);
+        self::assertStringContainsString('connection: jobs  queue: named', $namedText);
+        self::assertStringNotContainsString('queue: bound', $namedText);
     }
 
     public function test_an_empty_store_says_so(): void
     {
-        $output = self::memoryStream();
+        $output = new CommandOutput();
 
-        self::assertSame(0, new ListCommand($this->store, $output)->run(CommandArguments::parse([])));
-        self::assertSame("No failed jobs.\n", self::contents($output));
+        self::assertSame(0, new ListCommand($this->store, $output->output)->run(CommandArguments::parse([])));
+        self::assertSame("No failed jobs.\n", $output->takeStdout());
+        self::assertSame('', $output->takeStderr());
     }
 
     /**
@@ -98,6 +102,6 @@ final class ListCommandTest extends CommandTestCase
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new ListCommand($this->store, self::memoryStream())->run(CommandArguments::parse($argv));
+        new ListCommand($this->store, new CommandOutput()->output)->run(CommandArguments::parse($argv));
     }
 }

@@ -500,6 +500,54 @@ script again after `Kinetis\Redis\Exception\OutcomeUnknown`: it may
 already have taken the slot. Let the exception propagate from
 `reserve()`; the client passes it to the caller unchanged.
 
+### Recording when a paced request was sent
+
+A paced call can wait for its slot before anything reaches the wire, so
+the time the call started is not the time the request was sent. To
+record the first attempt's send time, wrap the shared pacer in a
+per-call recorder. The client waits exactly the returned slot before it
+issues the first attempt, and it refuses a slot that is not shorter than
+the time left in the call's deadline:
+
+```{code-block} php
+namespace App\Http;
+
+use Kinetis\RevoltHttpClient\RequestPacer;
+
+final class FirstSendRecorder implements RequestPacer
+{
+    /** Unix time the first attempt was issued, or null before it is. */
+    public private(set) ?float $sentAt = null;
+
+    public function __construct(private readonly RequestPacer $pacer) {}
+
+    public function reserve(string $origin, float $maxWaitSeconds): ?float
+    {
+        $wait = $this->pacer->reserve($origin, $maxWaitSeconds);
+
+        if ($this->sentAt === null && $wait !== null && $wait < $maxWaitSeconds) {
+            $this->sentAt = microtime(true) + max(0.0, $wait);
+        }
+
+        return $wait;
+    }
+}
+```
+
+`withPacer()` returns a copy of the client, so the recorder lives for
+one call and never on `AppScope`:
+
+```{code-block} php
+$recorder = new FirstSendRecorder($this->pacer);
+$response = $this->http->withPacer($recorder)->post('/shipments', $payload)->throw();
+$this->shipments->markSent($shipmentId, $recorder->sentAt);
+```
+
+`$this->pacer` is the pacer the client was built with. The value is the
+worker's clock plus the slot, to the event loop's timer precision. A
+retry also waits out its backoff, which the pacer does not see, so the
+recorder reports the first attempt only.
+
 ### Unique jobs
 
 To keep at most one job per key queued or running, insert a claim row

@@ -6,6 +6,7 @@ namespace Kinetis\QueueFailedJobs\Console;
 
 use Kinetis\Console\Attributes\Command;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\QueueFailedJobs\SqlFailedJobStore;
 
 /**
@@ -15,10 +16,9 @@ use Kinetis\QueueFailedJobs\SqlFailedJobStore;
  */
 final readonly class PruneCommand
 {
-    /** @param resource $output */
     public function __construct(
         private SqlFailedJobStore $store,
-        private mixed $output = \STDOUT,
+        private Output $output,
     ) {}
 
     #[Command('queue:prune', description: 'Delete failed jobs older than an age: queue:prune --hours=<n>')]
@@ -27,7 +27,7 @@ final readonly class PruneCommand
         $hours = FailedJobOptions::integer($arguments, 'hours', 0);
         $pruned = $this->store->prune($hours * 3600);
 
-        fwrite($this->output, "Pruned {$pruned} failed job(s) older than {$hours} hour(s).\n");
+        $this->output->line("Pruned {$pruned} failed job(s) older than {$hours} hour(s).");
 
         return 0;
     }

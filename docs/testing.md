@@ -99,8 +99,9 @@ final class OrderControllerTest extends ApplicationTestCase
 }
 ```
 
-Nothing is registered by hand: routes, middleware, event listeners, and
-package bootstraps are discovered exactly as they are at runtime, and
+Nothing is registered by hand: routes, middleware, event listeners,
+commands, and package bootstraps are discovered exactly as they are at
+runtime, and
 `bootstrap.php` runs. A route you just wrote is testable without touching
 the test's setup.
 
@@ -267,6 +268,56 @@ A failed status, JSON or validation assertion prints the response body
 alongside the mismatch, since an unexpected status is usually explained
 by what the body says. `json()` and `body()` are there for anything the
 assertions don't cover, and both can be called repeatedly.
+
+## Testing a command
+
+`TestApplication::command()` runs a command by name and returns a
+`Kinetis\Testing\CommandResult` with its exit code, everything it wrote
+to stdout (`output`) and to stderr (`errorOutput`), and the throwable it
+raised, if any (`exception`):
+
+```{code-block} php
+public function test_it_reports_a_missing_address(): void
+{
+    $result = $this->application->command('app:send-report');
+
+    self::assertSame(1, $result->exitCode);
+    self::assertSame('', $result->output);
+    self::assertSame("Usage: app:send-report <email>\n", $result->errorOutput);
+}
+
+public function test_it_sends_the_report(): void
+{
+    $result = $this->application->command('app:send-report', ['ops@example.com', '--dry-run']);
+
+    self::assertSame(0, $result->exitCode, $result->errorOutput);
+}
+```
+
+The command runs through the same path `vendor/bin/kinetis` uses: a
+fresh request scope with an `Output` bound, the command resolved from
+that scope, and the scope disposed afterwards. A request-scoped binding
+a package installs, such as the transaction guard `kinetis/database-bridge`
+rolls back on disposal, behaves as it does in production. A command
+that throws is logged and dispatches `CommandFailed` as it would under
+the binary; the result carries exit code `1` and the throwable instead of
+rethrowing it. The streams are captured in memory without colour.
+
+Commands are discovered from your source when the application boots,
+never from `.kinetis-cache/`, so a command you just wrote is runnable
+without `kinetis build`. A name no discovered command has throws
+`InvalidArgumentException`.
+
+The application stays booted across calls, so a test can run a command
+and then assert through `$this->app` on what it changed. Two
+differences from the binary follow from that:
+
+- A `#[Command(bootstrap: false)]` command runs against the application
+  the test already booted, bootstrap chain included, rather than an
+  unbootstrapped one.
+- A command that loops until it is signalled, such as `queue:work`,
+  never returns. Test the work it performs, a job handler for instance,
+  instead.
 
 ## Testing against a database
 

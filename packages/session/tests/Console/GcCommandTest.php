@@ -8,6 +8,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Session\Console\GcCommand;
 use Kinetis\Session\SessionStoreInterface;
 use Kinetis\Session\Store\FileSessionStore;
+use Kinetis\Session\Tests\Fixtures\CommandOutput;
 use Kinetis\Session\Tests\Fixtures\RecordingSessionStore;
 use PHPUnit\Framework\TestCase;
 
@@ -29,10 +30,11 @@ final class GcCommandTest extends TestCase
             \json_encode(['expiresAt' => \time() - 1, 'data' => ['gone' => true]], JSON_THROW_ON_ERROR),
         );
 
-        [$exitCode, $output] = self::runCommand($store);
+        [$exitCode, $output, $error] = self::runCommand($store);
 
         self::assertSame(0, $exitCode);
         self::assertSame("Removed 1 expired session(s).\n", $output);
+        self::assertSame('', $error);
         self::assertSame(['keep' => true], $store->read($live));
 
         $store->destroy($live);
@@ -41,22 +43,24 @@ final class GcCommandTest extends TestCase
 
     public function test_a_backend_expiring_store_reports_nothing_to_collect(): void
     {
-        [$exitCode, $output] = self::runCommand(new RecordingSessionStore());
+        [$exitCode, $output, $error] = self::runCommand(new RecordingSessionStore());
 
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('expires entries on its own', $output);
+        self::assertSame('', $error);
     }
 
     public function test_no_bound_store_is_a_clear_error(): void
     {
-        [$exitCode, $output] = self::runCommand(null);
+        [$exitCode, $output, $error] = self::runCommand(null);
 
         self::assertSame(1, $exitCode);
-        self::assertStringContainsString('SESSION_DRIVER', $output);
+        self::assertSame('', $output);
+        self::assertSame("No session store is bound — set SESSION_DRIVER (file, redis, or sql).\n", $error);
     }
 
     /**
-     * @return array{int, string}
+     * @return array{int, string, string} exit code, stdout, stderr
      */
     private static function runCommand(?SessionStoreInterface $store): array
     {
@@ -68,14 +72,9 @@ final class GcCommandTest extends TestCase
 
         $app->boot();
 
-        $output = \fopen('php://memory', 'r+');
-        self::assertIsResource($output);
+        $capture = new CommandOutput();
+        $exitCode = new GcCommand($app->createRequestScope(), $capture->output)->run();
 
-        $exitCode = new GcCommand($app->createRequestScope(), $output)->run();
-        \rewind($output);
-        $printed = \stream_get_contents($output);
-        self::assertIsString($printed);
-
-        return [$exitCode, $printed];
+        return [$exitCode, $capture->takeStdout(), $capture->takeStderr()];
     }
 }

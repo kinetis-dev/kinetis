@@ -15,6 +15,7 @@ use Kinetis\Queue\QueueInterface;
 use Kinetis\QueueFailedJobs\FailedJobRetrier;
 use Kinetis\QueueFailedJobs\PackageBootstrap;
 use Kinetis\QueueFailedJobs\SqlFailedJobStore;
+use Kinetis\QueueFailedJobs\Tests\Fixtures\CommandOutput;
 use Kinetis\QueueFailedJobs\Tests\Fixtures\FailedJobsTableLink;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -96,20 +97,16 @@ final class PackageBootstrapTest extends TestCase
         });
         $app->boot();
 
-        $output = fopen('php://memory', 'r+');
-        self::assertIsResource($output);
-        $errorOutput = fopen('php://memory', 'r+');
-        self::assertIsResource($errorOutput);
+        $output = new CommandOutput();
 
         try {
-            new WorkCommand($app->createRequestScope(), $config, $output, $errorOutput)->run(CommandArguments::parse([]));
+            new WorkCommand($app->createRequestScope(), $config, $output->output)->run(CommandArguments::parse([]));
             self::fail("Expected {$exception}.");
         } catch (Throwable $e) {
             self::assertInstanceOf($exception, $e);
             self::assertStringContainsString($message, $e->getMessage());
         }
 
-        rewind($output);
-        self::assertSame('', stream_get_contents($output));
+        self::assertSame('', $output->takeStdout());
     }
 }

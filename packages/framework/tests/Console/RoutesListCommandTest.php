@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Tests\Console;
 
+use Kinetis\Console\Output;
 use Kinetis\Console\RoutesListCommand;
 use Kinetis\Http\Middleware\ExceptionHandlerMiddleware;
 use Kinetis\Http\Middleware\SecurityHeadersMiddleware;
@@ -28,18 +29,30 @@ final class RoutesListCommandTest extends TestCase
 
     private function runCommand(?string $projectRoot = null): string
     {
-        $stream = fopen('php://memory', 'r+');
-        self::assertNotFalse($stream);
-
-        $command = new RoutesListCommand(new ProjectRoot($projectRoot ?? $this->projectRoot), $stream);
-        $exitCode = $command->run();
+        [$exitCode, $stdout, $stderr] = $this->execute($projectRoot ?? $this->projectRoot);
         self::assertSame(0, $exitCode);
+        self::assertSame('', $stderr);
 
-        rewind($stream);
-        $output = stream_get_contents($stream);
-        self::assertNotFalse($output);
+        return $stdout;
+    }
 
-        return $output;
+    /**
+     * @return array{int, string, string} exit code, stdout, stderr
+     */
+    private function execute(string $projectRoot): array
+    {
+        $stdout = fopen('php://memory', 'w+');
+        $stderr = fopen('php://memory', 'w+');
+        self::assertNotFalse($stdout);
+        self::assertNotFalse($stderr);
+
+        $command = new RoutesListCommand(new ProjectRoot($projectRoot), new Output($stdout, $stderr, false, false));
+        $exitCode = $command->run();
+
+        rewind($stdout);
+        rewind($stderr);
+
+        return [$exitCode, (string) stream_get_contents($stdout), (string) stream_get_contents($stderr)];
     }
 
     /**
@@ -363,5 +376,72 @@ final class RoutesListCommandTest extends TestCase
             rmdir($root . '/src');
             rmdir($root);
         }
+    }
+
+    /**
+     * The command boots its own application scope; it disposes it once
+     * the listing is written, so repeated runs in one process do not
+     * leave booted scopes (and whatever they opened) behind.
+     */
+    public function test_disposes_the_application_scope_it_booted(): void
+    {
+        $root = $this->projectWithDisposeCallback('$GLOBALS[\'kinetis_routes_list_disposed\'] = true;');
+        $GLOBALS['kinetis_routes_list_disposed'] = false;
+
+        try {
+            $this->runCommand($root);
+
+            self::assertTrue($GLOBALS['kinetis_routes_list_disposed']);
+        } finally {
+            unset($GLOBALS['kinetis_routes_list_disposed']);
+            $this->removeProject($root);
+        }
+    }
+
+    /**
+     * A disposal failure does not replace the listing already written: it
+     * is reported on stderr by class only, and the exit code is 70.
+     */
+    public function test_a_disposal_failure_keeps_the_listing_and_exits_70(): void
+    {
+        $root = $this->projectWithDisposeCallback('throw new \RuntimeException(\'amqp://user:secret@broker\');');
+
+        try {
+            [$exitCode, $stdout, $stderr] = $this->execute($root);
+
+            self::assertSame(70, $exitCode);
+            self::assertStringContainsString('Global middleware (outermost to innermost):', $stdout);
+            self::assertSame("Application disposal failed after listing routes: RuntimeException\n", $stderr);
+        } finally {
+            $this->removeProject($root);
+        }
+    }
+
+    private function projectWithDisposeCallback(string $callbackBody): string
+    {
+        $root = sys_get_temp_dir() . '/kinetis_routes_list_dispose_' . bin2hex(random_bytes(8));
+        mkdir($root);
+
+        file_put_contents($root . '/composer.json', json_encode([
+            'autoload' => ['psr-4' => ['App\\' => 'src/']],
+        ]));
+        file_put_contents($root . '/bootstrap.php', <<<PHP
+            <?php
+            declare(strict_types=1);
+            use Kinetis\Config\Config;
+            use Kinetis\Container\AppScope;
+            return static function (AppScope \$app, Config \$config): void {
+                \$app->onDispose(static function (): void { {$callbackBody} });
+            };
+            PHP);
+
+        return $root;
+    }
+
+    private function removeProject(string $root): void
+    {
+        unlink($root . '/composer.json');
+        unlink($root . '/bootstrap.php');
+        rmdir($root);
     }
 }

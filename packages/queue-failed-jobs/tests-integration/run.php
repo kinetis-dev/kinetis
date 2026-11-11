@@ -15,6 +15,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use Kinetis\Config\Config;
 use Kinetis\Console\CommandArguments;
+use Kinetis\Console\Output;
 use Kinetis\Container\AppScope;
 use Kinetis\DatabaseBridge\ConnectionFactory;
 use Kinetis\Queue\FailedJob;
@@ -62,10 +63,12 @@ $id = $store->record(new FailedJob(
 
 $app = new AppScope();
 $app->boot();
-$output = fopen('php://memory', 'r+');
-assert(is_resource($output));
+$stdout = fopen('php://memory', 'r+');
+$stderr = fopen('php://memory', 'r+');
+assert(is_resource($stdout) && is_resource($stderr));
 
-$exit = new RetryCommand($store, $app->createRequestScope(), $config, $output)->run(CommandArguments::parse([$id]));
+$exit = new RetryCommand($store, $app->createRequestScope(), $config, new Output($stdout, $stderr, false, false))
+    ->run(CommandArguments::parse([$id]));
 $app->dispose();
 
 check('queue:retry exits 0', $exit === 0);

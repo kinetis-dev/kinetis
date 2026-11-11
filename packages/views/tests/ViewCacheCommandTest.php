@@ -6,6 +6,7 @@ namespace Kinetis\Views\Tests;
 
 use Kinetis\Views\Console\ClearCommand;
 use Kinetis\Views\Console\WarmCommand;
+use Kinetis\Views\Tests\Fixtures\CommandOutput;
 use Kinetis\Views\ViewEngineInterface;
 use Kinetis\Views\ViewName;
 use Kinetis\Views\Views;
@@ -31,18 +32,14 @@ final class ViewCacheCommandTest extends TestCase
                 return 5;
             }
         });
-        $warmOutput = fopen('php://memory', 'w+');
-        $clearOutput = fopen('php://memory', 'w+');
-        self::assertIsResource($warmOutput);
-        self::assertIsResource($clearOutput);
+        $warmOutput = new CommandOutput();
+        $clearOutput = new CommandOutput();
 
-        self::assertSame(0, (new WarmCommand($views, $warmOutput))->run());
-        self::assertSame(0, (new ClearCommand($views, $clearOutput))->run());
-        rewind($warmOutput);
-        rewind($clearOutput);
-        self::assertSame("Warmed 4 view template(s).\n", stream_get_contents($warmOutput));
-        self::assertSame("Removed 5 cached view file(s).\n", stream_get_contents($clearOutput));
-        fclose($warmOutput);
-        fclose($clearOutput);
+        self::assertSame(0, (new WarmCommand($views, $warmOutput->output))->run());
+        self::assertSame(0, (new ClearCommand($views, $clearOutput->output))->run());
+        self::assertSame("Warmed 4 view template(s).\n", $warmOutput->takeStdout());
+        self::assertSame("Removed 5 cached view file(s).\n", $clearOutput->takeStdout());
+        self::assertSame('', $warmOutput->takeStderr());
+        self::assertSame('', $clearOutput->takeStderr());
     }
 }
