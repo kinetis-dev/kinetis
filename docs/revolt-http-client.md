@@ -172,10 +172,13 @@ $reports = $http
   endpoint known to return more.
 - `withRetries()` resends only `GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`
   and `DELETE`, after a transport failure or a 429, 500, 502, 503 or 504
-  status, waiting between attempts inside the same timeout. It never
-  resends `POST` or `PATCH`. HTTP defines `PUT` and `DELETE` as
-  idempotent; enable retries only for an API whose `PUT` and `DELETE`
-  really are. A client without `withRetries()` sends every request once.
+  status, waiting between attempts inside the same timeout and at least
+  as long as a `Retry-After` header asks. When the server's wait does
+  not fit in what is left of the timeout, its response is returned
+  instead of being retried early. It never resends `POST` or `PATCH`.
+  HTTP defines `PUT` and `DELETE` as idempotent; enable retries only for
+  an API whose `PUT` and `DELETE` really are. A client without
+  `withRetries()` sends every request once.
 
 {ref}`http-client-reference-deadline` has the exact deadline and retry
 behavior, and {ref}`http-client-reference-ceiling` the byte ceiling.
@@ -237,8 +240,47 @@ The two requests overlap instead of running one after the other.
 `concurrently()` lets every task finish, then rethrows the first
 failure in task order; see {doc}`concurrency`.
 
-To test code that uses `Http` without a network, construct it over
-Symfony's `MockHttpClient` ({ref}`http-client-reference-transports`).
+## Testing
+
+Construct `Http` over Symfony's `MockHttpClient` to test code that uses
+it without a network. The mock answers with its `MockResponse` list in
+order, and `getRequestsCount()` reports how many requests were sent:
+
+```{code-block} php
+use App\Shipping\CarrierApi;
+use Kinetis\RevoltHttpClient\Http;
+use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpClient\MockHttpClient;
+use Symfony\Component\HttpClient\Response\MockResponse;
+
+final class CarrierApiTest extends TestCase
+{
+    public function test_a_503_is_retried(): void
+    {
+        $mock = new MockHttpClient([
+            new MockResponse('', ['http_code' => 503]),
+            new MockResponse('{"status": "delivered"}'),
+        ]);
+
+        $carrier = new CarrierApi(
+            new Http($mock)
+                ->withBaseUrl('https://api.carrier.example/v2')
+                ->withToken('test-token')
+                ->withRetries(2),
+        );
+
+        self::assertSame(['status' => 'delivered'], $carrier->track('1Z999'));
+        self::assertSame(2, $mock->getRequestsCount());
+    }
+}
+```
+
+Build the client under test the way the application does: a client
+carrying a token needs `withBaseUrl()` there too, and the mock receives
+the same absolute URLs and headers the real transport would. A request
+past the end of the list fails with the `InvalidRequest` category.
+{ref}`http-client-reference-transports` states what any injected
+transport must uphold.
 
 ## See also
 

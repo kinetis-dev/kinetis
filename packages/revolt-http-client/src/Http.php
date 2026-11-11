@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kinetis\RevoltHttpClient;
 
 use Closure;
+use DateTimeImmutable;
+use DateTimeZone;
 use Kinetis\RevoltHttpClient\Exception\HttpFailure;
 use Kinetis\RevoltHttpClient\Exception\HttpRequestException;
 use Revolt\EventLoop;
@@ -52,6 +54,9 @@ final class Http
 
     /** Doubling from here, and always inside the total timeout. */
     private const float FIRST_BACKOFF_SECONDS = 0.1;
+
+    /** RFC 9110's three HTTP-date forms: IMF-fixdate, then the obsolete RFC 850 and asctime. */
+    private const array HTTP_DATE_FORMATS = ['D, d M Y H:i:s \\G\\M\\T', 'l, d-M-y H:i:s \\G\\M\\T', 'D M j H:i:s Y'];
 
     /** Headers that carry a credential, and so make a base URL mandatory. */
     private const array CREDENTIAL_HEADERS = ['authorization', 'cookie'];
@@ -181,11 +186,12 @@ final class Http
     /**
      * Sends a failed GET, HEAD, OPTIONS, TRACE, PUT or DELETE request
      * again, up to $times more times (at most 10), with backoff doubling
-     * from 100 ms inside the one operation deadline. Out of retries, or of
-     * budget for the next backoff, the last response received is
-     * returned; a transport failure with no response behind it throws
-     * instead. Every other method is sent once, as a client without
-     * retries sends it.
+     * from 100 ms inside the one operation deadline. A retryable response
+     * carrying a valid `Retry-After` waits at least as long as it asks.
+     * Out of retries, or of budget for the next wait, the last response
+     * received is returned; a transport failure with no response behind
+     * it throws instead. Every other method is sent once, as a client
+     * without retries sends it.
      */
     public function withRetries(int $times = 3): self
     {
@@ -360,14 +366,20 @@ final class Http
                 return $response;
             }
 
-            $backoff = self::FIRST_BACKOFF_SECONDS * 2 ** ($budget->attempts - 1);
+            $wait = self::FIRST_BACKOFF_SECONDS * 2 ** ($budget->attempts - 1);
 
-            if ($budget->attempts > $retries || $backoff >= $budget->remaining()) {
+            // A wait the server asked for is never shortened: one that
+            // does not fit in the budget ends the retries instead.
+            if ($status !== null && $budget->attempts <= $retries) {
+                $wait = max($wait, self::retryAfterSeconds($response->header('Retry-After')));
+            }
+
+            if ($budget->attempts > $retries || $wait >= $budget->remaining()) {
                 return $status === null ? throw $budget->transportFailure() : $response;
             }
 
             $response->discard();
-            self::pause($backoff);
+            self::pause($wait);
         }
     }
 
@@ -406,6 +418,33 @@ final class Http
         }
 
         return $body;
+    }
+
+    /**
+     * The wait a `Retry-After` value asks for, in seconds: delta-seconds,
+     * or an HTTP-date measured against the wall clock, a past one being
+     * zero. Anything else asks for nothing.
+     */
+    private static function retryAfterSeconds(?string $value): float
+    {
+        if ($value === null) {
+            return 0.0;
+        }
+
+        if (ctype_digit($value)) {
+            return (float) $value;
+        }
+
+        foreach (self::HTTP_DATE_FORMATS as $format) {
+            $date = DateTimeImmutable::createFromFormat($format, $value, new DateTimeZone('UTC'));
+
+            // Warnings mark a date that only parsed by overflowing a field.
+            if ($date !== false && DateTimeImmutable::getLastErrors() === false) {
+                return max(0.0, $date->getTimestamp() - microtime(true));
+            }
+        }
+
+        return 0.0;
     }
 
     /** Suspends the caller for $seconds, leaving the loop free to run everything else. */

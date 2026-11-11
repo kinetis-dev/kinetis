@@ -62,10 +62,12 @@ blocking the whole process — so several run at once through
   `DELETE`; every other method, `POST` and `PATCH` included, is sent
   once, because neither a dropped connection nor a retryable status
   proves the server did not apply it. A stream or `Closure` body is
-  refused on a request that could be retried, rather than resent.
-  `withTimeout()` bounds the whole operation on a monotonic
-  clock — every attempt, every backoff, and every read of the
-  response — and is enforced here rather than trusted to the transport.
+  refused on a request that could be retried, rather than resent. A
+  server's `Retry-After` is never cut short: a wait that does not fit
+  the deadline ends the retries. `withTimeout()` bounds the whole
+  operation on a monotonic clock — every attempt, every backoff, and
+  every read of the response — and is enforced here rather than trusted
+  to the transport.
 - **A bounded response.** `withMaxResponseBytes()` is the ceiling a body
   may reach, enforced while it arrives rather than once it is already in
   memory. Every request asks for identity encoding, so the bytes counted

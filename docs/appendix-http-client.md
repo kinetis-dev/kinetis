@@ -207,7 +207,8 @@ does that.
 request whose method is exactly `GET`, `HEAD`, `OPTIONS`, `TRACE`,
 `PUT`, or `DELETE` — the methods RFC 9110 defines as idempotent. It
 sends such a request again, up to `$times` more times (at most 10), with
-backoff doubling from 100 ms, for:
+backoff doubling from 100 ms or the server's `Retry-After`, whichever is
+longer, for:
 
 - a transport failure — DNS, a refused connection, a dropped socket;
 - a status the server itself marks as worth repeating: 429, 500, 502,
@@ -220,9 +221,19 @@ transport failure that outlives them has no answer to give back, so it
 throws. A request this client or the transport refused, a timeout, and a
 response past the byte ceiling are never retried.
 
-Backoff waits inside the one deadline. When the next one would not fit,
-the last response received is returned rather than waited past the
-budget; with no response in hand, the transport failure propagates.
+A retryable status that carries a valid `Retry-After` waits at least as
+long as it asks: the wait before the next attempt is the larger of the
+backoff and the server's delay. The value is either a non-negative
+integer of seconds or an HTTP-date in any of RFC 9110's three forms,
+measured against the wall clock, and a date already past asks for no
+wait. Any other value is ignored and the backoff alone applies.
+
+Every wait happens inside the one deadline. When the next one would not
+fit, the last response received is returned rather than waited past the
+budget; with no response in hand, the transport failure propagates. A
+server's `Retry-After` is never shortened to fit: a 429 asking for 30
+seconds under a 10-second budget is returned after one attempt, its
+`Retry-After` still readable with `header()`.
 
 **Every other method is sent once**, `POST` and `PATCH` included, even
 by a client with retries configured. Neither a transport failure nor a
