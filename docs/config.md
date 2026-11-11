@@ -64,24 +64,25 @@ variables are worker-lifetime configuration, not per-request state.
 | Method | Returns |
 |---|---|
 | `get(string $key, ?string $default = null): ?string` | The raw value, or `$default` when the key is absent |
-| `string(string $key, string $default): string` | Same as `get()`, with a required (non-null) default |
+| `string(string $key, string $default): string` | The value, or `$default` when unset or empty |
 | `int(string $key, int $default): int` | The value as `int`, or `$default` when unset or empty |
 | `intOrNull(string $key): ?int` | The value as `int`, or `null` when unset or empty — no default to fall back to |
 | `float(string $key, float $default): float` | The value as `float`, or `$default` when unset or empty |
 | `bool(string $key, bool $default): bool` | The value as `bool`, or `$default` when unset or empty |
 | `required(string $key): string` | The raw value, or throws `Kinetis\Config\Exception\MissingConfigException` when the key is absent |
 
-The four parsing accessors — `int()`, `intOrNull()`, `float()`, `bool()`
-— treat an explicitly empty value (`DB_PORT=`) the same as an unset one
-and fall back to the default. That is the convention a named-connection
-setting uses to turn itself off. Anything else that doesn't parse, or
+The typed accessors — `string()`, `int()`, `intOrNull()`, `float()`,
+`bool()` — treat an explicitly empty value (`DB_PORT=`) the same as an
+unset one and fall back to the default. That is the convention a
+named-connection setting uses to turn itself off, and it keeps a Compose
+passthrough such as `APP_X: ${APP_X:-}` from replacing a default with
+`''`. For the parsing accessors, anything else that doesn't parse, or
 doesn't fit, throws `Kinetis\Config\Exception\InvalidConfigValueException`
 rather than taking whatever a lossy cast would produce.
 
-`get()`, `string()` and `required()` do not parse, and so do not apply
-that rule: they return an empty value as the empty string. `DB_PASSWORD=`
-satisfies `required('DB_PASSWORD')` and yields `''`. Only an absent key
-throws.
+`get()` and `required()` return the raw value, so an empty value comes
+back as the empty string. `DB_PASSWORD=` satisfies
+`required('DB_PASSWORD')` and yields `''`. Only an absent key throws.
 
 `int()`/`intOrNull()` accept an optional sign followed by decimal digits
 only — leading zeroes (`"007"`) are fine, but a fraction, an exponent,

@@ -85,6 +85,17 @@ final class SecurityHeadersMiddlewareTest extends TestCase
         self::assertSame('nosniff', $response->getHeaderLine('X-Content-Type-Options'));
     }
 
+    public function test_an_empty_value_keeps_the_default_header(): void
+    {
+        $response = self::process([
+            'SECURITY_FRAME_OPTIONS' => '',
+            'SECURITY_REFERRER_POLICY' => '',
+        ]);
+
+        self::assertSame('DENY', $response->getHeaderLine('X-Frame-Options'));
+        self::assertSame('strict-origin-when-cross-origin', $response->getHeaderLine('Referrer-Policy'));
+    }
+
     public function test_hsts_is_assembled_from_its_parts(): void
     {
         self::assertSame(

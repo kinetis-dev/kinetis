@@ -34,6 +34,21 @@ final class ConfigTest extends TestCase
         self::assertSame('localhost', $config->string('DB_HOST', 'localhost'));
     }
 
+    public function test_string_treats_an_explicitly_empty_value_as_unset(): void
+    {
+        $config = new Config(['DB_HOST' => '']);
+
+        self::assertSame('localhost', $config->string('DB_HOST', 'localhost'));
+        self::assertSame('', $config->get('DB_HOST', 'localhost'));
+    }
+
+    public function test_string_returns_a_non_empty_value_over_the_default(): void
+    {
+        $config = new Config(['DB_HOST' => 'db.internal']);
+
+        self::assertSame('db.internal', $config->string('DB_HOST', 'localhost'));
+    }
+
     public function test_int_casts_present_values_and_falls_back_to_the_default(): void
     {
         $config = new Config(['DB_PORT' => '3306']);
