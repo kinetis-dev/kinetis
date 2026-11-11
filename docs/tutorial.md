@@ -519,6 +519,7 @@ completion — `app` now waits for it, with its own `entrypoint` cleared so
 it doesn't also try to install into the same shared `vendor` volume at
 the same time.
 
+(tutorial-database-healthcheck)=
 The MySQL healthcheck probes TCP because the image's init phase answers
 on a socket first. The official `postgres` image does the same: its init
 phase runs a temporary server with `listen_addresses=''`, so a bare

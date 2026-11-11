@@ -104,6 +104,12 @@ inherited check on every service that does not run the server:
 `kinetis/pingpong`'s `docker-compose.yml` does this for its `migrate`,
 `queue-worker` and `cron` services.
 
+A Compose `depends_on` on a database service needs a healthcheck that
+passes only once the database accepts TCP connections; the
+{ref}`Postgres healthcheck <tutorial-database-healthcheck>` in the
+tutorial shows why a bare `pg_isready` releases dependents too early.
+
+(runtime-frankenphp-worker-threads)=
 ### Sizing FrankenPHP's worker threads
 
 Each worker thread processes one HTTP request at a time, start to

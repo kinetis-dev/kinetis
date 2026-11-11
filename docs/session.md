@@ -39,12 +39,8 @@ SESSION_DRIVER=file
   the key's TTL.
 - **`sql`** — a `kinetis_sessions` table on the connection
   `kinetis/database-bridge` binds from `DB_CONNECTION`. Create the table
-  from a {doc}`migrations` stub:
-
-  ```{code-block} text
-  vendor/kinetis/session/resources/migrations/create_kinetis_sessions_table.mysql.php.stub
-  vendor/kinetis/session/resources/migrations/create_kinetis_sessions_table.pgsql.php.stub
-  ```
+  from the package's `create_kinetis_sessions_table` {doc}`migrations`
+  stub, as {ref}`migrations-package-tables` describes.
 
 `SESSION_SECURE` defaults to `true`, so a browser sends the cookie back
 only over HTTPS. For plain-HTTP local development, set

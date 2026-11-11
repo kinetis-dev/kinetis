@@ -263,6 +263,39 @@ registration.
 | `SymbolicLinkEncountered`, or `UnableToListContents` wrapping it | A symlink inside `FILESYSTEM_ROOT` | Replace the link with a real directory. The configured root itself may be a symlink. |
 | `UnableToWriteFile`: "the destination names the storage root itself" | An empty or root-only key | Build the key before writing. |
 
+(storage-testing)=
+## Testing
+
+The package binds `League\Flysystem\FilesystemOperator` only when
+`FILESYSTEM_DRIVER` is set. Replace that binding in
+`registerTestDoubles()` (see {doc}`testing`) with Flysystem's in-memory
+adapter, so a test writes no files:
+
+```{code-block} sh
+composer require --dev league/flysystem-memory
+```
+
+```{code-block} php
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+use League\Flysystem\Filesystem;
+use League\Flysystem\FilesystemOperator;
+use League\Flysystem\InMemory\InMemoryFilesystemAdapter;
+
+protected function registerTestDoubles(AppScope $app, Config $config): void
+{
+    $app->instance(
+        FilesystemOperator::class,
+        new Filesystem(new InMemoryFilesystemAdapter()),
+    );
+}
+```
+
+`league/flysystem-memory` is not a dependency of any Kinetis package; the
+application requires it. The in-memory filesystem skips the local
+driver's path confinement and symlink rules, so cover those with a test
+against a real `FILESYSTEM_ROOT`.
+
 ## See also
 
 - {doc}`appendix-storage` — publication, path and symlink contracts, the

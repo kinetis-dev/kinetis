@@ -148,6 +148,9 @@ protected function registerTestDoubles(AppScope $app, Config $config): void
 }
 ```
 
+{ref}`storage-testing` and {ref}`mailer-testing` show the filesystem and
+mailer replacements.
+
 That window is the only one there is: `AppScope` refuses new bindings
 once `boot()` has run, so a double registered from a test body would be
 too late.

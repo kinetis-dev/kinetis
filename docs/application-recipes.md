@@ -301,6 +301,40 @@ directly — {doc}`routing-validation`, {doc}`session`,
 - **Non-goal**: treating a local or single-process run as proof of a
   managed platform's own process lifecycle guarantees.
 
+## A controllable clock
+
+- **Guides**: {doc}`testing`, "Replacing what a test should not reach".
+- **Shape**: the application binds a `Psr\Clock\ClockInterface` in
+  `bootstrap.php` and injects it wherever it computes "what is due now".
+  The application requires `psr/clock`; no Kinetis package does.
+
+  ```{code-block} php
+  use Psr\Clock\ClockInterface;
+
+  final class NativeClock implements ClockInterface
+  {
+      public function now(): DateTimeImmutable
+      {
+          return new DateTimeImmutable();
+      }
+  }
+
+  // bootstrap.php
+  $app->instance(ClockInterface::class, new NativeClock());
+  ```
+
+  A test replaces the binding in `registerTestDoubles()` with a clock
+  that returns a fixed `DateTimeImmutable`.
+- **Boundary**: Kinetis binds no clock. It reads `time()` itself where
+  processes must agree on wall-clock time: `kinetis/queue-sql` writes and
+  compares `available_at` and `reserved_at` with it,
+  `kinetis/queue-redis` scores a delayed job with it, and
+  `kinetis/auth-jwt` takes `iat` and `exp` from it. An application clock
+  moves none of those. Deadlines and timeouts are measured inside the
+  packages that wait, and no application clock reaches them either.
+- **Non-goal**: a framework clock abstraction, or freezing the queue and
+  token timestamps from application code.
+
 (recipes-coordination)=
 
 ## Coordinating work across processes

@@ -468,6 +468,25 @@ its worker's pool queues inside the pool, which adds latency to that one
 request, a far softer failure than connections the database rejects.
 {doc}`runtime-adapters` covers sizing the workers.
 
+(database-reference-connections-per-link)=
+### Connections per link in one process
+
+`DB_DRIVER=auto` selects the native driver only under FrankenPHP or
+RoadRunner's HTTP mode, and PDO everywhere else. A command-line process
+such as `queue:work` or `migrate` therefore runs PDO, which holds one
+blocking connection per link, and `DB_MAX_CONNECTIONS` does not apply.
+`DB_DRIVER=native` selects the pooled native driver in a command-line
+process too.
+
+Each named link a process uses opens its own connection. The SQL queue
+opens a link of its own for the connection the queue runs on, and
+`kinetis/queue-failed-jobs` opens another for
+`FAILED_JOBS_DB_CONNECTION_NAME`, so a queue worker that also uses the
+application's link holds one connection per link: two for the queue and
+the application, three with failed-job recording, even when all of them
+name the same database. Count them per process, then multiply by the
+process count against the database's `max_connections`.
+
 ### A connection the server closed
 
 A pooled connection the server closes (an idle socket past
@@ -858,6 +877,36 @@ the logger itself is discarded: it can never be misclassified as a
 rollback failure, never prevent a later tracked transaction from being
 attempted, and never replace an already-propagating exception the way an
 unprotected logger call could.
+
+(database-reference-result-types)=
+## Result value types
+
+A row is an array keyed by column name. The PHP type a column comes back
+as depends on the driver:
+
+| Column | mysqli (native) | PDO MySQL | pgsql (native) | PDO Postgres |
+| --- | --- | --- | --- | --- |
+| integer, `BIGINT` | `int` | `int` | `int` | `int` |
+| `BIGINT UNSIGNED` above `PHP_INT_MAX` | `string` | `string` | not applicable | not applicable |
+| `FLOAT`, `DOUBLE` / `real`, `double precision` | `float` | `float` | `float` | `float` |
+| `DECIMAL` / `numeric` | `string` | `string` | `string` | `string` |
+| boolean | `int` (`1`/`0`) | `int` (`1`/`0`) | `bool` | `bool` |
+| `NULL` | `null` | `null` | `null` | `null` |
+
+`DECIMAL` and `numeric` stay strings because they are arbitrary
+precision and a float cast would lose digits. MySQL has no boolean type,
+so `TRUE` and `FALSE` are the integers `1` and `0`. A `BIGINT UNSIGNED`
+value above `PHP_INT_MAX` stays its exact decimal string, as does a
+generated `UNSIGNED` id from `getLastInsertId()`. A `BIGINT` within the
+signed range, up to `PHP_INT_MAX` and down to `PHP_INT_MIN`, is an exact
+`int`.
+
+The native MySQL driver asks for native integers and floats
+(`MYSQLI_OPT_INT_AND_FLOAT_NATIVE`), the PDO drivers disable
+`PDO::ATTR_STRINGIFY_FETCHES`, and the native Postgres driver converts
+`int2`, `int4`, `int8`, `oid`, `float4`, `float8` and `bool` columns from
+the strings `ext-pgsql` returns. Dates, times and text come back as
+strings.
 
 ## See also
 
