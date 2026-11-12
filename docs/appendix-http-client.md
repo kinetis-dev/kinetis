@@ -214,6 +214,12 @@ longer, for:
 - a status the server itself marks as worth repeating: 429, 500, 502,
   503, 504.
 
+A second argument narrows the statuses to a subset of those five:
+`withRetries(3, [500, 502, 503, 504])` returns a 429 after one attempt,
+its `Retry-After` unread, and `withRetries(3, [])` retries transport
+failures only. Any other status, or a value that is not an integer, is
+refused with the `InvalidRequest` category.
+
 Every other status is an answer, returned as it is — repeating the
 request cannot change a 404. Running out of retries is not itself a
 failure either: the last answer the server gave is the answer you get. A
