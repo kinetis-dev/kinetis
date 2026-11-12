@@ -179,7 +179,9 @@ $reports = $http
   instead of being retried early. It never resends `POST` or `PATCH`.
   HTTP defines `PUT` and `DELETE` as idempotent; enable retries only for
   an API whose `PUT` and `DELETE` really are. A client without
-  `withRetries()` sends every request once.
+  `withRetries()` sends every request once. A second argument narrows
+  the retried statuses, for an API that answers 429 when a quota is
+  spent rather than when it asks for a wait.
 
 {ref}`http-client-reference-deadline` has the exact deadline and retry
 behavior, and {ref}`http-client-reference-ceiling` the byte ceiling.

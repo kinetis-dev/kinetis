@@ -412,7 +412,7 @@
             "description": "A Revolt-native, Fiber-suspending implementation of Symfony's HttpClientInterface — usable standalone by any project (AsyncAws or otherwise), not only Kinetis.",
             "namespace": "Kinetis\\RevoltHttpClient\\",
             "testNamespace": "Kinetis\\RevoltHttpClient\\Tests\\",
-            "version": "1.6.0",
+            "version": "1.7.0",
             "requiresDev": [
                 "framework"
             ],
