@@ -384,12 +384,19 @@ $agent->addTool($connector->tools());
 MCP session: it sends `initialize` and the `initialized` notification,
 and keeps the session, its ID if the server issues one, and the
 connector's `token` and `headers` for as long as the connector lives.
-Every `tools()` call sends `tools/list`.
+Every `tools()` call sends `tools/list`. Neuron never ends a session it
+opened: a server that issues session IDs keeps each one until it expires
+it.
 
 | Connector | Each request sends | Every request uses |
 |---|---|---|
-| Built in the request | `initialize`, `tools/list` | Its own session and credentials |
-| Registered in the application scope | `tools/list` | One session and one set of credentials for the whole worker |
+| Built in the request | `initialize`, `tools/list` | Its own session and credentials; the server keeps one session per request until it expires them |
+| Registered in the application scope | `tools/list` | The connector's session and one set of credentials for the whole worker |
+
+Two requests that make the first `tools()` call of an application-scoped
+connector concurrently each open a session; the connector keeps the one
+opened last. Call `tools()` once when the worker starts to open its
+single session before requests arrive.
 
 Register a connector in the application scope only when its credentials
 are the application's own service credentials, which every request may
