@@ -38,9 +38,10 @@ use Throwable;
  * on a parent context they build themselves — the propagated or root
  * context for a request or a job, the batch span for a task — because
  * each begins on a Fiber whose context may be uninitialized, where
- * reading the ambient context warns instead of answering. Query spans
- * never activate at all: they overlap within a single Fiber, and
- * activating them would interleave that Fiber's own stack.
+ * reading the ambient context warns instead of answering. Query and
+ * inference spans never activate at all: they overlap or interleave
+ * with other work within a single Fiber, and activating them would
+ * interleave that Fiber's own stack.
  *
  * The hooks hand over the same operation inputs the decorators see, and
  * they reach a span under the same rules — {@see Redaction} states
@@ -49,7 +50,9 @@ use Throwable;
  * failure ends a hook pair. The MCP tool name and resource URI are the
  * exception that needs no handling: `McpDispatcher` reports them only
  * after resolving them against the registry, so both are members of a
- * closed registered set rather than caller-supplied text.
+ * closed registered set rather than caller-supplied text. An inference
+ * reports the provider and model the application configured, and its
+ * token counts.
  */
 final readonly class OtelTelemetry implements TelemetryInterface
 {
@@ -329,6 +332,38 @@ final readonly class OtelTelemetry implements TelemetryInterface
     public function resourceReadEnded(mixed $token): void
     {
         $this->end($token, null);
+    }
+
+    /**
+     * A client span under OpenTelemetry's GenAI conventions, named
+     * `chat {model}`, carrying the provider, the requested model and the
+     * token usage — never prompt or completion content. It is not
+     * activated: a streamed inference interleaves with the code reading
+     * its chunks, and can end from another call path than the one that
+     * started it.
+     */
+    #[\Override]
+    public function inferenceStarted(string $system, string $model): mixed
+    {
+        return $this->start(
+            $model === '' ? 'chat' : "chat {$model}",
+            [
+                'gen_ai.operation.name' => 'chat',
+                'gen_ai.system' => $system,
+                'gen_ai.request.model' => $model,
+            ],
+            kind: SpanKind::KIND_CLIENT,
+        );
+    }
+
+    #[\Override]
+    public function inferenceEnded(mixed $token, ?int $inputTokens, ?int $outputTokens, ?Throwable $failure): void
+    {
+        $span = $this->spanOf($token);
+        $span?->setAttribute('gen_ai.usage.input_tokens', $inputTokens);
+        $span?->setAttribute('gen_ai.usage.output_tokens', $outputTokens);
+
+        $this->end($token, $failure);
     }
 
     #[\Override]

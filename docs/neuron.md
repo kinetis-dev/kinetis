@@ -339,6 +339,43 @@ empty list, and between a list and an object whose keys are `"0"`,
 therefore refused as a JSON array, with feedback the model cannot act
 on. Give such an argument at least one member, or make it optional.
 
+(neuron-trace-inference)=
+
+## Trace inference
+
+`Kinetis\Neuron\InferenceTelemetry::observe()` reports every provider
+call of one agent through the framework's instrumentation hooks, and
+returns the agent:
+
+```{code-block} php
+use Kinetis\Neuron\InferenceTelemetry;
+
+return InferenceTelemetry::observe(Agent::make())
+    ->setAiProvider($this->providers->openAi())
+    ->setThreadId($conversationId)
+    ->chat(new UserMessage($question))
+    ->getMessage()
+    ?->getContent();
+```
+
+With {doc}`telemetry` exporting, each call is a `chat {model}` span
+carrying the provider, the model and the token usage
+({ref}`telemetry-inference`). Without it, the hooks do nothing.
+
+- **One agent.** The listener belongs to the agent it observes and ends
+  with it. Call `observe()` on every agent you build; concurrent agents
+  in one worker report separate spans.
+- **How a call ends.** A completed call, an answer stopped by
+  `StoppableHttpClient` included, ends with the usage the provider
+  reported. A call that throws, and a stream whose reader stops reading
+  it, ends with the failure Neuron reports for the run.
+- **Tool calls.** An `McpTools` tool already has its tool-call span, so
+  `observe()` adds no tool span.
+- **Provider names.** Neuron's provider classes map to OpenTelemetry's
+  `gen_ai.system` names: `OpenAI` to `openai`, `Anthropic` to
+  `anthropic`, `Gemini` to `gcp.gemini`, and so on. A subclass such as
+  `OpenAILike` can reach any service and reports `_OTHER`.
+
 ## When a call fails
 
 Every failure is a `NeuronAI\Exceptions\HttpException`, the exception
@@ -393,7 +430,7 @@ requests:
 | `UsageMeter` from Neuron's evaluation tools | It records into a static, shared by every request in the worker. |
 | Streaming an answer to the client under RoadRunner | RoadRunner answers a `StreamedResponse` with `501` ({doc}`runtime-adapters`). |
 
-Telemetry spans and remote MCP servers are not part of this package.
+Remote MCP servers are not part of this package.
 
 ## See also
 

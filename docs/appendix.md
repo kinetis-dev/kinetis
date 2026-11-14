@@ -182,7 +182,8 @@ A PSR-16 (`Psr\SimpleCache\CacheInterface`) cache — distinct from `Kinetis\Cac
   through `Kernel::handle()`, route match, middleware, hydration,
   controller, response encoding, queries with a
   server-started pool boundary, transactions, `concurrently()` batches
-  and tasks, events/listeners, MCP calls, queue push and jobs), plus
+  and tasks, events/listeners, MCP calls, queue push and jobs, model
+  inference), plus
   `phase()` for pre-container lifecycle phases reported with explicit
   timestamps; `jobPushMetadata()` returns opaque string metadata a queue
   backend stores with the job and hands back through `jobStarted()` —

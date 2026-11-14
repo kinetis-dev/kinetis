@@ -195,8 +195,8 @@ way through a response body falls inside it.
 
 The decorators wrap boundaries from outside; the hooks report from inside
 the framework, which is where the request-pipeline, query and queue spans
-come from. Core, the SQL clients `kinetis/database-bridge` builds, and
-the queue packages report named moments through
+come from. Core, the SQL clients `kinetis/database-bridge` builds, the
+queue packages and `kinetis/neuron` report named moments through
 `Kinetis\Instrumentation\TelemetryInterface` — a no-op until this
 package's bootstrap swaps in its OpenTelemetry backend:
 
@@ -220,6 +220,8 @@ package's bootstrap swaps in its OpenTelemetry backend:
   named span pair.
 - **Queue push and worker jobs** — the producer and consumer spans,
   carrying the trace context that joins them.
+- **Model inference** — a span per provider call of a Neuron agent
+  `kinetis/neuron` observes ({ref}`telemetry-inference`).
 
 The interface is not a consumer extension point — an application reads
 this data from its tracing backend rather than implementing it;

@@ -376,6 +376,7 @@ Separate Composer package, not part of `kinetis/framework` core.
 - `Kinetis\Neuron\AgentStream` — request-scoped. `__construct(NeuronAI\Agent\Adapters\VercelAIAdapter|NeuronAI\Agent\Adapters\AGUIAdapter $adapter)`; `response(Generator $events): Kinetis\Http\StreamedResponse` answers `200` with the adapter's `getHeaders()`, and its emitter writes each event of `$events`, the run of an agent whose stream adapter is `$adapter`, as `SSEEncoder::frame()`, flushing every frame. On a throwable it returns when `connection_aborted()` is 1; otherwise it writes and flushes `$adapter->error()`, which is empty when the run already sent its error frames, and rethrows. See {ref}`neuron-browser-stream`.
 - `Kinetis\Neuron\McpTools` — request-scoped. `__construct(Kinetis\Mcp\McpRegistry $registry, Kinetis\Container\RequestScope $scope)`; `select(string $name, string ...$names): list<NeuronAI\Tools\ToolInterface>` returns the named `#[McpTool]` tools in the order given, and throws `InvalidArgumentException` for a name the registry does not carry. See {ref}`neuron-mcp-tools`.
 - `Kinetis\Neuron\ScopedMcpTool extends NeuronAI\Tools\Tool` — `@internal`. `getInputSchema()` returns the tool's MCP `inputSchema` unchanged and the tool declares no Neuron properties, so Neuron neither casts nor checks arguments. `execute()` re-reads Neuron's decoded arguments as JSON, binds them through `KinetisMcpApplication::hydrationArguments()`, and calls `McpDispatcher::callTool()` with the request scope it was built in. A return value is JSON-encoded, a `ToolResult` gives its text (an error when it is one), a `ValidationException` gives `ToolOutput::error(KinetisMcpApplication::validationFeedback())`, and any other exception propagates.
+- `Kinetis\Neuron\InferenceTelemetry` — `static observe(NeuronAI\Agent\Agent $agent): Agent` subscribes one listener to `$agent`'s observability events, acting on `InferenceStart`, `InferenceStop` and `WorkflowError`, and returns `$agent`. Each `InferenceStart` calls `Telemetry::global()->inferenceStarted()` with the `gen_ai.system` name of the agent's provider class (exact class; `_OTHER` for any other) and its `getModel()`; the token is held in a `WeakMap` keyed by the event's message. The `InferenceStop` for that message ends the pair with the response message's `Usage`, or nulls without one; a `WorkflowError` ends every pair still in flight with its exception. The listener holds the agent weakly and lives in the agent's own listener registry. See {ref}`neuron-trace-inference`.
 - Depends on `kinetis/framework`, `kinetis/mcp`, `kinetis/mcp-protocol`, `kinetis/revolt-http-client` and `neuron-core/neuron-ai`. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
 ## `packages/storage-s3` (`kinetis/storage-s3`)
@@ -565,8 +566,13 @@ on its spans.
   for a request or a job, the batch span reached through the batch token
   `taskStarted()` is handed — because each begins on a Fiber that may
   carry no context of its own.
-  Query spans never activate: they overlap within one Fiber, and
-  activating them would interleave that Fiber's own stack.
+  Query and inference spans never activate: they overlap or interleave
+  with other work within one Fiber, and activating them would
+  interleave that Fiber's own stack.
+  `inferenceStarted()`/`inferenceEnded()` produce a `chat {model}`
+  client span carrying `gen_ai.operation.name`, `gen_ai.system`,
+  `gen_ai.request.model` and, when reported, `gen_ai.usage.input_tokens`
+  and `gen_ai.usage.output_tokens`; no prompt or completion content.
   `jobPushMetadata()` injects a `traceparent` carrier the backend
   stores with the job;
   `jobStarted()` extracts it, parenting the consumer span into the

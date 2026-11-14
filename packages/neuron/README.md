@@ -69,6 +69,16 @@ $run = $agent->setStreamAdapter(static fn (): VercelAIAdapter => $adapter)->stre
 return new AgentStream($adapter)->response($run);
 ```
 
+`Kinetis\Neuron\InferenceTelemetry` reports every provider call of an
+agent through the framework's instrumentation hooks; with
+[`kinetis/telemetry`](https://github.com/kinetis-dev/telemetry) each
+becomes a span carrying the provider, the model and the token usage,
+never the prompt or the answer:
+
+```php
+$agent = InferenceTelemetry::observe(Agent::make())->setAiProvider($provider);
+```
+
 ## Installation
 
 ```sh
