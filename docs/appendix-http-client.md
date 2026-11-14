@@ -312,7 +312,8 @@ with the `ResponseTooLarge` category, and the response is released
 rather than left holding a connection nothing will read.
 
 The refusal surfaces from whichever read reaches it. Usually that is
-`body()`, `json()`, or `jsonPath()`. It can also be `status()` — a
+`body()`, `json()`, `jsonPath()`, or `chunks()` and the pieces it
+yields ({ref}`http-client-reference-chunks`). It can also be `status()` — a
 transport delivers body bytes while it answers a status wait, and a
 client with retries waits for the status inside `send()` on every method
 it retries. What the ceiling never does is fetch a body nobody asked
@@ -348,6 +349,49 @@ An integer too large for PHP's own int type is decoded as a **string**
 rather than rounded into a float, so an API that keys resources by ids
 beyond JavaScript's safe integer range hands back its digits exactly as
 they were sent.
+
+(http-client-reference-chunks)=
+
+### Streaming a body
+
+`chunks(): Generator<int, string>` yields the body as the transport
+delivers it, each value a non-empty string, without buffering it on the
+response. The {doc}`revolt-http-client` guide shows it in use.
+
+- **Before the first piece.** The call itself reads the headers, so
+  `chunks()` can throw any failure a header read can. A `Content-Length`
+  past the ceiling throws `ResponseTooLarge` from the call, before any
+  body is read.
+- **Each piece.** Every step is a read like `body()`'s: it suspends the
+  calling Fiber, is checked against the deadline before and after, and
+  maps a vendor failure to `Transport`, `Timeout` or `ResponseTooLarge`
+  from the budget's state, with the same message rules
+  ({ref}`http-client-reference-failures`). A step waits no longer than
+  what is left of the deadline, so a stalled upstream ends in `Timeout`
+  at the deadline.
+- **The ceiling.** Pieces are counted as they are handed over, and the
+  piece that would carry the total past the ceiling throws
+  `ResponseTooLarge` instead of being yielded. That count is what holds
+  the bound: the Amp transport runs its progress hook only when it is
+  read, after it has already queued what arrived.
+- **Ownership.** A stream read to its end leaves nothing to release. A
+  stream left before its end — `break`, an exception, a failure, or the
+  generator being destroyed — cancels the transport response at that
+  point. A generator that is created and never iterated reads nothing,
+  and the response releases as described below.
+- **Exclusivity.** The body is read once. Once `chunks()` has returned a
+  generator, `body()`, `json()`, `jsonPath()` and a second `chunks()`
+  throw with the `Consumed` category, iterated or not. `chunks()` after
+  `body()` throws the same way, and after `discard()` with the
+  `Discarded` category.
+- **Retries.** `withRetries()` settles the status before the response
+  is returned, so streaming starts after the final attempt and a failure
+  after that is never retried.
+
+An injected transport serves `chunks()` through its own
+`HttpClientInterface::stream()`. Symfony's `MockHttpClient` streams a
+`MockResponse` body the same way, so a test can drive `chunks()`
+without a network.
 
 ### Giving a response back
 

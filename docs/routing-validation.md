@@ -673,7 +673,9 @@ holds the worker for the duration of the I/O:
 - files the application stores are read through {doc}`storage`, and the
   bytes are passed to `FileResponse::fromContents()`;
 - a body too large to hold in memory is written by returning a
-  `Kinetis\Http\StreamedResponse`.
+  `Kinetis\Http\StreamedResponse`. Its emitter can relay an upstream
+  reply as it arrives with the HTTP client's `chunks()`
+  ({ref}`http-client-stream`).
 
 `downloadFilename` is escaped for the `Content-Disposition` header, so a
 user-supplied name cannot add header parameters. Path separators are
