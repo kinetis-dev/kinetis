@@ -28,7 +28,7 @@ API-first applications, developed in the
 [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 A provider call suspends the calling Fiber instead of blocking the
 process, has one deadline and one byte ceiling, and can reach only the
-provider's origin. Usable outside Kinetis too.
+provider's origin.
 
 ```php
 use Kinetis\Neuron\NeuronHttpClient;
@@ -49,14 +49,24 @@ and holds no request data, so one instance can serve every request of a
 persistent worker. Build the provider and the `Agent` per request: both
 hold request data.
 
+`Kinetis\Neuron\McpTools` gives an agent the application's own
+`#[McpTool]` tools, called in process with the current request's scope,
+validated by the MCP dispatcher, and published to the provider with
+their MCP input schema unchanged:
+
+```php
+$agent->addTool($mcpTools->select('find_orders', 'cancel_order'));
+```
+
 ## Installation
 
 ```sh
 composer require kinetis/neuron
 ```
 
-Requires PHP 8.4+, [`neuron-core/neuron-ai`](https://github.com/neuron-core/neuron-ai)
-and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
+Requires PHP 8.4+, [`neuron-core/neuron-ai`](https://github.com/neuron-core/neuron-ai),
+[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)
+and [`kinetis/mcp`](https://github.com/kinetis-dev/mcp).
 Full documentation, including request scoping, streaming, failure
 mapping and the Neuron features to avoid in a persistent worker:
 [kinetis.dev/docs/neuron.html](https://kinetis.dev/docs/neuron.html).

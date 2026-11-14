@@ -100,6 +100,7 @@ providers and agents do hold request data:
 | `NeuronHttpClient`, and the `Http` inside it | Application | Immutable; nothing from a request is kept. |
 | The provider (`OpenAI`, `Anthropic`, ...) | Request | Every agent run sets the system prompt and the tool list on the provider it uses. A shared provider carries one request's instructions and tools into the next. |
 | The `Agent` | Request | It holds the chat history, the thread ID and any pending tool call. |
+| `McpTools` and the tools it returns | Request | They run each call with the request scope they were built in ({ref}`neuron-mcp-tools`). |
 
 Build both inside the request:
 
@@ -173,6 +174,81 @@ RoadRunner process serves one request at a time
 ({ref}`concurrency-overlap`), so cross-request capacity still comes from
 the worker count.
 
+(neuron-mcp-tools)=
+
+## Give an agent the application's tools
+
+An agent can call the application's own `#[McpTool]` methods
+({doc}`mcp`) in process, without an MCP connection.
+`Kinetis\Neuron\McpTools` turns registered tools into Neuron tools:
+
+```{code-block} php
+namespace App\Assistant;
+
+use Kinetis\Neuron\McpTools;
+use NeuronAI\Agent\Agent;
+use NeuronAI\Chat\Messages\UserMessage;
+
+final readonly class OrderAssistant
+{
+    public function __construct(
+        private Providers $providers,
+        private McpTools $tools,
+    ) {}
+
+    public function answer(string $conversationId, string $question): ?string
+    {
+        return Agent::make()
+            ->setAiProvider($this->providers->openAi())
+            ->setThreadId($conversationId)
+            ->addTool($this->tools->select('find_orders', 'cancel_order'))
+            ->chat(new UserMessage($question))
+            ->getMessage()
+            ?->getContent();
+    }
+}
+```
+
+`select()` takes tool names, the `name` of each `#[McpTool]`, and
+returns the tools in that order. A name no tool is registered under
+throws `InvalidArgumentException` when the tools are built, before any
+agent runs.
+
+**Scope.** `McpTools` holds the request scope it was resolved from, and
+every tool call resolves its controller and the controller's
+dependencies from that scope: the tool runs with the current request's
+identity and request-scoped services, as an MCP call does over HTTP.
+Resolve `McpTools` inside the request, as `OrderAssistant` above is
+resolved, and never register it, or a tool from it, in the application
+scope.
+
+**Arguments and results.** The provider receives each tool's MCP
+`inputSchema` unchanged, so the model sees the same types, enums,
+required members, constraints and `additionalProperties: false` an MCP
+client sees. Neuron does not check or cast the model's arguments; the
+MCP dispatcher validates them as it does an MCP call. The tool's answer
+then goes back to the model:
+
+- A return value is JSON-encoded, as for an MCP client.
+- A returned `ToolResult` gives its text, as an error when it is one.
+- Invalid arguments give an error result carrying the
+  `{"errors": [...]}` feedback an MCP client receives
+  ({doc}`appendix-mcp`, "Error catalogue"), so the model can correct
+  its next call.
+- Any other exception is not turned into a result. It ends the agent
+  run, and `chat()` or `stream()` throws it. Neuron's `Agent` can
+  install a tool error handler to change that.
+
+A `ProgressReporter` parameter receives a reporter that discards
+progress. The dispatcher records the tool-call span, as for an MCP call.
+
+Neuron decodes the model's arguments into PHP arrays before a tool sees
+them, which loses the difference between an empty JSON object and an
+empty list, and between a list and an object whose keys are `"0"`,
+`"1"`, and so on. An empty object sent for an `#[ObjectMap]` argument is
+therefore refused as a JSON array, with feedback the model cannot act
+on. Give such an argument at least one member, or make it optional.
+
 ## When a call fails
 
 Every failure is a `NeuronAI\Exceptions\HttpException`, the exception
@@ -227,9 +303,8 @@ requests:
 | `UsageMeter` from Neuron's evaluation tools | It records into a static, shared by every request in the worker. |
 | Streaming an answer to the client under RoadRunner | RoadRunner answers a `StreamedResponse` with `501` ({doc}`runtime-adapters`). |
 
-This package covers the HTTP transport only. Neuron tools exposed as
-`#[McpTool]`, streaming an answer to the browser, telemetry spans and
-remote MCP servers are not part of it.
+Streaming an answer to the browser, telemetry spans and remote MCP
+servers are not part of this package.
 
 ## See also
 
@@ -237,3 +312,4 @@ remote MCP servers are not part of it.
   byte ceilings and failure categories.
 - {doc}`concurrency` — running several calls at once.
 - {doc}`container` — application and request scope.
+- {doc}`mcp` — declaring `#[McpTool]` tools.

@@ -271,7 +271,7 @@
             "description": "The Model Context Protocol server for Kinetis — tools and resources declared with attributes and validated like HTTP routes, served over stdio and as an ordinary /mcp route.",
             "namespace": "Kinetis\\Mcp\\",
             "testNamespace": "Kinetis\\Mcp\\Tests\\",
-            "version": "1.8.4",
+            "version": "1.9.0",
             "requires": [
                 "framework",
                 "mcp-protocol"
@@ -611,15 +611,15 @@
         },
         "neuron": {
             "name": "kinetis/neuron",
-            "description": "Runs Neuron AI providers over kinetis/revolt-http-client: a non-blocking, origin-pinned, deadline- and byte-bounded HttpClientInterface for neuron-core/neuron-ai, safe to share across requests in a persistent worker. Usable standalone, not only with Kinetis.",
+            "description": "Runs Neuron AI providers over kinetis/revolt-http-client: a non-blocking, origin-pinned, deadline- and byte-bounded HttpClientInterface for neuron-core/neuron-ai, safe to share across requests in a persistent worker, and the application's own #[McpTool] tools as Neuron tools, called in process in the current request's scope.",
             "namespace": "Kinetis\\Neuron\\",
             "testNamespace": "Kinetis\\Neuron\\Tests\\",
             "version": "1.0.0",
             "requires": [
+                "framework",
+                "mcp",
+                "mcp-protocol",
                 "revolt-http-client"
-            ],
-            "requiresDev": [
-                "framework"
             ],
             "require": {
                 "neuron-core/neuron-ai": "^4.1.24"
