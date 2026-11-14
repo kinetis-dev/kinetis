@@ -372,6 +372,7 @@ above the number here by design:
 | `mcp` | 75% |
 | `mcp-docs` | 60% |
 | `migrations` | 75% |
+| `neuron` | 60% (provisional, not measured: set from the score its first Infection run reports) |
 | `orbitron` | 70% |
 | `orm` | 60% |
 | `persistence` | 75% |

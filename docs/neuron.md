@@ -195,10 +195,19 @@ After `Transport` or `Timeout`, the provider may have received the
 request, run it and billed it. Nothing here sends it again. Decide in
 application code whether a repeat is worth it.
 
-The exception message is Neuron's own text, the request URI without
-user info, followed by the `Http` message, which names only the method
-and the origin. `$e->request` is Neuron's `HttpRequest`, headers
-included, so it holds the API key: log the message, not that property.
+Each message starts with Neuron's own text and the request URI without
+user info:
+
+- A `networkError()` message ends with the `Http` message, which names
+  only the method and the origin.
+- A `statusError()` message ends with the provider's error body, up to
+  the byte ceiling. That body is the provider's text and can quote the
+  prompt or other request content, so treat the message as you treat
+  request data before logging it, or log the status alone
+  (`$e->response->statusCode`).
+
+`$e->request` is Neuron's `HttpRequest`, headers included, so it holds
+the API key: never log that property.
 
 ## What not to use in a worker
 

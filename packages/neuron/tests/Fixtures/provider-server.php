@@ -11,7 +11,8 @@ declare(strict_types=1);
  * and `o\n` as two pieces, then `last` with no newline, 300 ms apart.
  * `/v1/until-abort?mark=` sends a line every 50 ms for up to five
  * seconds and records whether the client went away. `/v1/stall` sends
- * one line, then nothing for three seconds. `/v1/bytes/{n}` sends n bytes with no declared length.
+ * one line, then nothing for three seconds. `/v1/bytes/{n}` sends n
+ * bytes with no declared length.
  * `/v1/status/{code}` answers that status with a fixed body. `/v1/echo`
  * answers with what arrived. `/v1/slow/{ms}` answers after {ms}.
  * `/record?mark=` answers with a fixed body. With `?mark=`, every

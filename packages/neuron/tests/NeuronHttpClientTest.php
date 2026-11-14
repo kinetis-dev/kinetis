@@ -45,14 +45,16 @@ final class NeuronHttpClientTest extends TestCase
     public static function setUpBeforeClass(): void
     {
         foreach ([self::HOST, self::OTHER_HOST] as $host) {
-            // Several workers, so concurrent calls and an abandoned stream
-            // do not queue behind each other.
+            // A worker keeps sleeping through a request the client has
+            // left (`/stall` for three seconds, `/slow/2000` for two), and a
+            // busy worker accepts nothing. Enough workers that the next
+            // request, repeated runs included, always finds an idle one.
             self::$servers[] = proc_open(
                 ['php', '-S', $host, __DIR__ . '/Fixtures/provider-server.php'],
                 [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
                 $pipes,
                 null,
-                [...getenv(), 'PHP_CLI_SERVER_WORKERS' => '4'],
+                [...getenv(), 'PHP_CLI_SERVER_WORKERS' => '8'],
             );
 
             self::awaitListening($host);
