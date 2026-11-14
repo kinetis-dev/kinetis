@@ -28,9 +28,9 @@ use function Kinetis\Async\concurrently;
  */
 final class NeuronHttpClientTest extends TestCase
 {
-    private const string HOST = '127.0.0.1:8096';
+    private const string HOST = '127.0.0.1:8192';
 
-    private const string OTHER_HOST = '127.0.0.1:8097';
+    private const string OTHER_HOST = '127.0.0.1:8193';
 
     private const string BASE = 'http://' . self::HOST . '/v1';
 

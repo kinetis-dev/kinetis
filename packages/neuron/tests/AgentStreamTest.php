@@ -36,7 +36,7 @@ use Throwable;
  */
 final class AgentStreamTest extends TestCase
 {
-    private const string HOST = '127.0.0.1:8098';
+    private const string HOST = '127.0.0.1:8194';
 
     private const string BASE = 'http://' . self::HOST . '/v1';
 

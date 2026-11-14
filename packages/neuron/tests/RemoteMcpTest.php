@@ -29,7 +29,7 @@ use Throwable;
  */
 final class RemoteMcpTest extends TestCase
 {
-    private const string HOST = '127.0.0.1:8095';
+    private const string HOST = '127.0.0.1:8191';
 
     private const string ORIGIN = 'http://' . self::HOST;
 
@@ -136,7 +136,7 @@ final class RemoteMcpTest extends TestCase
 
     public function test_a_server_url_outside_the_clients_origin_is_refused_before_anything_is_sent(): void
     {
-        $client = new NeuronHttpClient(new Http()->withTimeout(10), 'http://127.0.0.1:8094');
+        $client = new NeuronHttpClient(new Http()->withTimeout(10), 'http://127.0.0.1:8190');
         $connector = new McpConnector(['url' => self::URL, 'token' => ServiceTokenMiddleware::TOKEN], $client);
 
         $failure = $this->failure(static fn () => $connector->tools());
