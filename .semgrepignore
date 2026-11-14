@@ -17,3 +17,10 @@ packages/auth-jwt/tests/Fixtures/UndersizedRsaKeyPair.php
 # not an HTML context, so the echoed-request rule's XSS concern doesn't
 # apply here.
 packages/revolt-http-client/tests/Fixtures/reflect-server.php
+
+# A test-only streaming server (started by HttpStreamTest via `php -S` on
+# 127.0.0.1, never deployed). Its `mark` query parameter is a temporary
+# file path the test creates and passes in, so the server can record
+# whether the client went away; the tainted-filename rule's SSRF concern
+# doesn't apply to a fixture whose only caller is the test itself.
+packages/revolt-http-client/tests/Fixtures/stream-server.php
