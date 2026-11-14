@@ -118,16 +118,12 @@ final readonly class NeuronHttpClient implements HttpClientInterface
 
     /**
      * Neuron's providers send absolute URIs under their base URI. One under
-     * the configured base goes out relative to it; any other absolute URI
-     * is passed on unchanged, and {@see Http} refuses it before anything
-     * is sent.
+     * the configured base goes out relative to it; any other absolute URI,
+     * the base URI itself included, is passed on unchanged, and
+     * {@see Http} refuses it before anything is sent.
      */
     private function target(#[SensitiveParameter] string $uri): string
     {
-        if ($uri . '/' === $this->prefix) {
-            return '';
-        }
-
         return str_starts_with($uri, $this->prefix) ? substr($uri, strlen($this->prefix)) : $uri;
     }
 }

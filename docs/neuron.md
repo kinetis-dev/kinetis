@@ -365,10 +365,10 @@ $agent->addTool($connector->tools());
 ```
 
 - **The base URL is the origin, not the endpoint.** `NeuronHttpClient`
-  sends a URL under its base URL as a path relative to it, and the base
-  URL itself is not such a path. A `url` on another origin is refused
-  before anything is sent, so `token` and `headers` reach only the
-  server's origin.
+  sends a URL under its base URL as a path relative to it. The base URL
+  itself is not such a path, so an endpoint given as the base URL is
+  refused before anything is sent, as is a `url` on another origin:
+  `token` and `headers` reach only the server's origin.
 - **`timeout`** is the deadline of each MCP message, 30 seconds when it
   is not set. Neuron passes it with every message, so it takes the place
   of `withTimeout()`.

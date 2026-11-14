@@ -257,6 +257,14 @@ final class NeuronHttpClientTest extends TestCase
         self::assertCategory(HttpFailure::InvalidRequest, $failure);
     }
 
+    public function test_the_base_url_itself_is_refused_as_an_absolute_url(): void
+    {
+        $failure = $this->failure(fn () => $this->client()->request(HttpRequest::get(self::BASE)));
+
+        self::assertCategory(HttpFailure::InvalidRequest, $failure);
+        self::assertStringContainsString('With a base URL, a request URL must be a path relative to it', $failure->getMessage());
+    }
+
     public function test_an_array_body_is_sent_as_json_and_a_string_body_raw(): void
     {
         $client = $this->client();
