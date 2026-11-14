@@ -7,7 +7,10 @@ declare(strict_types=1);
  *
  * `POST /v1/chat/completions` answers as an OpenAI-compatible API: after
  * one second with a JSON completion, or, for `"stream": true`, with SSE
- * frames 200 ms apart. `/v1/lines` sends `data: one\n`, then `data: tw`
+ * frames 200 ms apart. A streamed request for the model `cut` gets one
+ * text frame and no finish. One for the model `until-abort` with a
+ * `mark` member gets a text frame every 50 ms for up to five seconds,
+ * and records in that file whether the client went away. `/v1/lines` sends `data: one\n`, then `data: tw`
  * and `o\n` as two pieces, then `last` with no newline, 300 ms apart.
  * `/v1/until-abort?mark=` sends a line every 50 ms for up to five
  * seconds and records whether the client went away. `/v1/stall` sends
@@ -32,6 +35,36 @@ if ($path === '/v1/chat/completions') {
 
     if (is_array($payload) && ($payload['stream'] ?? false) === true) {
         header('Content-Type: text/event-stream');
+        $delta = static fn (string $content): string => 'data: '
+            . json_encode(['choices' => [['index' => 0, 'delta' => ['content' => $content]]]]) . "\n\n";
+
+        if (($payload['model'] ?? null) === 'until-abort' && is_string($payload['mark'] ?? null)) {
+            ignore_user_abort(true);
+
+            for ($i = 0; $i < 100; ++$i) {
+                echo $delta("w{$i} ");
+                flush();
+
+                if (connection_aborted() === 1) {
+                    file_put_contents($payload['mark'], "aborted after {$i} events\n", FILE_APPEND);
+
+                    return;
+                }
+
+                usleep(50_000);
+            }
+
+            file_put_contents($payload['mark'], "completed\n", FILE_APPEND);
+            echo 'data: ' . json_encode(['choices' => [['index' => 0, 'delta' => [], 'finish_reason' => 'stop']]]) . "\n\n";
+
+            return;
+        }
+
+        if (($payload['model'] ?? null) === 'cut') {
+            echo $delta('Hel');
+
+            return;
+        }
 
         foreach (['Hel', 'lo'] as $content) {
             echo 'data: ' . json_encode(['choices' => [['index' => 0, 'delta' => ['content' => $content]]]]) . "\n\n";

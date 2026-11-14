@@ -154,6 +154,96 @@ The `withTimeout()` deadline covers the whole stream. When a stream
 stops before its end, through a `break`, an exception or a dropped
 generator, the client cancels the connection to the provider.
 
+(neuron-browser-stream)=
+
+## Stream an answer to the browser
+
+`Kinetis\Neuron\AgentStream` sends an agent run to the browser as
+Server-Sent Events in one of Neuron's UI protocols: `VercelAIAdapter`
+for the Vercel AI SDK's `useChat`, `AGUIAdapter` for AG-UI clients. Set
+the adapter on the agent, then pass the same adapter and the run to
+`AgentStream`:
+
+```{code-block} php
+namespace App\Assistant;
+
+use Kinetis\Http\Attributes\Body;
+use Kinetis\Http\Attributes\Post;
+use Kinetis\Http\StreamedResponse;
+use Kinetis\Neuron\AgentStream;
+use NeuronAI\Agent\Adapters\VercelAIAdapter;
+use NeuronAI\Agent\Agent;
+use NeuronAI\Chat\Messages\UserMessage;
+
+final readonly class AssistantController
+{
+    public function __construct(private Providers $providers) {}
+
+    #[Post('/assistant/{conversationId}')]
+    public function ask(string $conversationId, #[Body] Question $question): StreamedResponse
+    {
+        $adapter = new VercelAIAdapter();
+
+        $run = Agent::make()
+            ->setAiProvider($this->providers->browserOpenAi())
+            ->setInstructions('Answer questions about orders. Be brief.')
+            ->setThreadId($conversationId)
+            ->setStreamAdapter(static fn (): VercelAIAdapter => $adapter)
+            ->stream(new UserMessage($question->text));
+
+        return new AgentStream($adapter)->response($run);
+    }
+}
+```
+
+`Question` is an application DTO. The provider comes from a factory
+method that stops its stream when the browser leaves:
+
+```{code-block} php
+use NeuronAI\HttpClient\StoppableHttpClient;
+
+public function browserOpenAi(): OpenAI
+{
+    return new OpenAI(
+        key: $this->apiKey,
+        model: 'gpt-4.1-mini',
+        httpClient: new StoppableHttpClient(
+            $this->client,
+            static fn (): bool => connection_aborted() === 1,
+        ),
+    );
+}
+```
+
+The response is `200` with the adapter's headers: `Content-Type:
+text/event-stream`, `X-Accel-Buffering: no` for nginx, and the
+protocol's own. The run starts when the response is emitted, after the
+headers, still inside the request scope. Each protocol event is
+written as one `data:` frame and flushed. FrankenPHP and PHP-FPM stream
+it. RoadRunner answers a streamed response with `501`
+({doc}`runtime-adapters`).
+
+**When the run fails.** The status and headers are already sent, so
+the browser receives the protocol's error frame instead: `error` for
+the AI SDK, `RUN_ERROR` for AG-UI. Its text is the adapter's neutral
+"The run failed.", never the exception message. The exception is then
+rethrown, and the framework logs it.
+
+**When the browser leaves.** `connection_aborted()` turns true at the
+first flush after the browser has gone. `StoppableHttpClient` asks its
+predicate before each event the provider reads. Neuron then ends the
+answer with the text streamed so far, with the stop reason
+`StoppableHttpClient::STOP_REASON` (`'stopped'`), and closes the
+provider stream. A stop before the first word fails the run with a
+`ProviderException`. `AgentStream` does not rethrow a failure once the
+browser has gone, because no one is left to read it; Neuron's observers
+still record it. What each runtime does:
+
+| Runtime | When the browser leaves |
+|---|---|
+| FrankenPHP (worker mode) | The script keeps running and the answer stops as described above. The transport closes the provider connection from the event loop, and a worker runs its loop only while it serves a request. Until the next request on the same worker thread waits on non-blocking I/O, the connection stays open and the provider keeps generating. The `withTimeout()` deadline is a timer on the same loop, so it does not end the connection sooner. |
+| PHP-FPM behind nginx | nginx closes the FastCGI connection, and PHP ends the script at the next write. The provider connection closes with the request. No stopped answer is recorded. |
+
 ## Several calls at once
 
 ```{code-block} php
@@ -303,8 +393,7 @@ requests:
 | `UsageMeter` from Neuron's evaluation tools | It records into a static, shared by every request in the worker. |
 | Streaming an answer to the client under RoadRunner | RoadRunner answers a `StreamedResponse` with `501` ({doc}`runtime-adapters`). |
 
-Streaming an answer to the browser, telemetry spans and remote MCP
-servers are not part of this package.
+Telemetry spans and remote MCP servers are not part of this package.
 
 ## See also
 
