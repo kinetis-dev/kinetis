@@ -133,6 +133,72 @@ configured for that origin.
 {ref}`http-client-reference-response` has the JSON decoding rules and
 how to release a response you will not read.
 
+(http-client-stream)=
+
+## Stream a response
+
+`chunks()` hands over the body as it arrives instead of buffering it,
+for a token stream, an NDJSON export or a large download:
+
+```{code-block} php
+$response = $this->http->withTimeout(120)->post('/v1/chat', $payload)->throw();
+
+foreach ($response->chunks() as $bytes) {
+    // each $bytes is the next non-empty piece of the body, in order
+}
+```
+
+Each piece is raw bytes as the transport delivered them. A piece can end
+mid-line or mid-character; splitting into SSE events or JSON lines is the
+caller's. The calling Fiber suspends between pieces, so the event loop
+keeps running: timers and other Fibers of the same request, such as work
+started with `concurrently()`, proceed meanwhile. `status()`, `headers()` and `throw()`
+work before and during the stream.
+
+- **The timeout covers the whole stream.** `withTimeout()` runs from the
+  request to the last byte, so a long stream needs a timeout that long;
+  a stream still running when it expires, or one that stalls, throws
+  with the `Timeout` category.
+- **The byte ceiling covers the whole stream.** A `Content-Length` past
+  `withMaxResponseBytes()` throws from `chunks()` before anything is
+  read, and a stream with no declared length throws `ResponseTooLarge`
+  instead of handing over the piece that would pass the ceiling. Raise
+  the ceiling for a download known to be larger.
+- **Stopping early releases the connection.** A `break`, an exception
+  thrown in the loop body, or a discarded generator cancels the
+  transport response. A generator you keep in a variable holds the
+  connection until it is destroyed.
+- **The body is read once.** After `chunks()`, `body()`, `json()` and
+  another `chunks()` throw with the `Consumed` category, and so does
+  `chunks()` after `body()`.
+- **A stream is never retried.** With `withRetries()`, a retryable
+  status is settled before the response is returned, so the stream
+  always comes from the final attempt. A failure after the first byte
+  throws; nothing is resent.
+
+To relay an upstream to the browser, read it inside a
+`Kinetis\Http\StreamedResponse` emitter:
+
+```{code-block} php
+use Kinetis\Http\StreamedResponse;
+use Nyholm\Psr7\Response;
+
+$upstream = $this->http->withTimeout(120)->post('/v1/chat', $payload)->throw();
+
+return new StreamedResponse(
+    new Response(200, ['Content-Type' => 'text/event-stream', 'X-Accel-Buffering' => 'no']),
+    static function () use ($upstream): void {
+        foreach ($upstream->chunks() as $bytes) {
+            echo $bytes;
+            flush();
+        }
+    },
+);
+```
+
+{doc}`runtime-adapters` lists the runtimes that stream a
+`StreamedResponse`.
+
 ## Credentials stay on one origin
 
 A client carrying an `Authorization` or `Cookie` header — from
@@ -243,6 +309,7 @@ exception from a pacer passes through unchanged. Branch on its
 | `ErrorStatus` | `throw()` met a status outside 2xx; `$e->status` holds it. |
 | `Conversion` | `json()` or `jsonPath()` met a body that is not a JSON object or array. |
 | `Discarded` | The response was read after `discard()`. |
+| `Consumed` | The body was read a second way: `body()` or `json()` after `chunks()`, or `chunks()` after `body()`, `json()` or `chunks()`. |
 
 **A failed write can already have happened.** A connection can drop
 after the server acted but before its response arrived, so `Transport`
