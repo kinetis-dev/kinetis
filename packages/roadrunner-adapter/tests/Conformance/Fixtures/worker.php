@@ -71,6 +71,7 @@ $pipeline = new MiddlewarePipeline(
 
             return new \Nyholm\Psr7\Response(204);
         }
+
         $id = $request->getHeaderLine('X-Conformance-Id');
 
         if (!is_string($stateDir) || $stateDir === '' || preg_match('/^[0-9a-f]{32}$/', $id) !== 1) {
