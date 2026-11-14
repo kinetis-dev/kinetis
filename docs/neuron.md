@@ -339,6 +339,63 @@ empty list, and between a list and an object whose keys are `"0"`,
 therefore refused as a JSON array, with feedback the model cannot act
 on. Give such an argument at least one member, or make it optional.
 
+(neuron-remote-mcp)=
+
+## Use a remote MCP server
+
+Neuron's `McpConnector` reaches an MCP server over Streamable HTTP
+through `StreamableHttpTransport`, which sends every message through the
+HTTP client it is given. Give it a `NeuronHttpClient` whose base URL is
+the server's origin:
+
+```{code-block} php
+use Kinetis\Neuron\NeuronHttpClient;
+use Kinetis\RevoltHttpClient\Http;
+use NeuronAI\MCP\McpConnector;
+
+$connector = new McpConnector(
+    ['url' => 'https://tools.example.com/mcp', 'token' => $serviceToken, 'timeout' => 20],
+    new NeuronHttpClient(
+        new Http()->withMaxResponseBytes(1024 * 1024),
+        'https://tools.example.com',
+    ),
+);
+
+$agent->addTool($connector->tools());
+```
+
+- **The base URL is the origin, not the endpoint.** `NeuronHttpClient`
+  sends a URL under its base URL as a path relative to it, and the base
+  URL itself is not such a path. A `url` on another origin is refused
+  before anything is sent, so `token` and `headers` reach only the
+  server's origin.
+- **`timeout`** is the deadline of each MCP message, 30 seconds when it
+  is not set. Neuron passes it with every message, so it takes the place
+  of `withTimeout()`.
+- **`withMaxResponseBytes()`** bounds every response. A larger one fails
+  the message with `ResponseTooLarge`.
+- **A failure** of `tools()` or of a tool call is a
+  `NeuronAI\MCP\McpException`, with the `HttpException` of
+  {ref}`neuron-call-fails` as its previous exception; a failed tool call
+  ends the agent run. Nothing is sent again, so a tool call that timed
+  out may still have run on the server.
+
+**Connector lifetime.** The first `tools()` call opens the connector's
+MCP session: it sends `initialize` and the `initialized` notification,
+and keeps the session, its ID if the server issues one, and the
+connector's `token` and `headers` for as long as the connector lives.
+Every `tools()` call sends `tools/list`.
+
+| Connector | Each request sends | Every request uses |
+|---|---|---|
+| Built in the request | `initialize`, `tools/list` | Its own session and credentials |
+| Registered in the application scope | `tools/list` | One session and one set of credentials for the whole worker |
+
+Register a connector in the application scope only when its credentials
+are the application's own service credentials, which every request may
+use. When the token or the session belongs to a user or to a request,
+build the connector in the request.
+
 (neuron-trace-inference)=
 
 ## Trace inference
@@ -375,6 +432,8 @@ carrying the provider, the model and the token usage
   `gen_ai.system` names: `OpenAI` to `openai`, `Anthropic` to
   `anthropic`, `Gemini` to `gcp.gemini`, and so on. A subclass such as
   `OpenAILike` can reach any service and reports `_OTHER`.
+
+(neuron-call-fails)=
 
 ## When a call fails
 
@@ -425,12 +484,10 @@ requests:
 | `FilePersistence`, `DatabasePersistence`, `FileMessageStore`, `SQLMessageStore` | Blocking file and PDO I/O. |
 | `PhpSerializer` | It calls `unserialize()` with no class restriction. |
 | A workflow interrupt and resume | A resumed node runs again from its start and repeats whatever it did before the interrupt that was not memoized. |
-| `StdioTransport` for MCP | `proc_open()` and blocking pipe reads. |
-| `SseHttpTransport` for MCP | `fopen()` on the server URL blocks. |
+| `StdioTransport` for MCP, an `McpConnector` configured with `command` | `proc_open()` and blocking pipe reads. |
+| `SseHttpTransport` for MCP, an `McpConnector` configured with `async: true` | `fopen()` on the server URL blocks. |
 | `UsageMeter` from Neuron's evaluation tools | It records into a static, shared by every request in the worker. |
 | Streaming an answer to the client under RoadRunner | RoadRunner answers a `StreamedResponse` with `501` ({doc}`runtime-adapters`). |
-
-Remote MCP servers are not part of this package.
 
 ## See also
 

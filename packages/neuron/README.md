@@ -79,6 +79,20 @@ never the prompt or the answer:
 $agent = InferenceTelemetry::observe(Agent::make())->setAiProvider($provider);
 ```
 
+The same client carries Neuron's `McpConnector` to a remote MCP server
+over Streamable HTTP, pinned to the server's origin and bounded by its
+byte ceiling. Build the connector per request unless its credentials are
+the application's own
+([guide](https://kinetis.dev/docs/neuron.html#neuron-remote-mcp)):
+
+```php
+$connector = new McpConnector(
+    ['url' => 'https://tools.example.com/mcp', 'token' => $serviceToken],
+    new NeuronHttpClient(new Http(), 'https://tools.example.com'),
+);
+$agent->addTool($connector->tools());
+```
+
 ## Installation
 
 ```sh
