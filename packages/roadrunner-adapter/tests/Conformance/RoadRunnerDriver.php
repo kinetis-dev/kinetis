@@ -63,6 +63,12 @@ final class RoadRunnerDriver implements RuntimeAdapterDriver
      * class turn its absence into a clean skip instead of every test in
      * the suite failing with a confusing "no such file" error.
      */
+    /** A path in the state directory the worker writes to. */
+    public function statePath(string $name): string
+    {
+        return "{$this->stateDir}/{$name}";
+    }
+
     public static function binaryPath(): string
     {
         return __DIR__ . '/../../rr';

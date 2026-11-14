@@ -241,7 +241,7 @@ still record it. What each runtime does:
 
 | Runtime | When the browser leaves |
 |---|---|
-| FrankenPHP (worker mode) | The script keeps running and the answer stops as described above. The transport closes the provider connection from the event loop, and a worker runs its loop only while it serves a request. Until the next request on the same worker thread waits on non-blocking I/O, the connection stays open and the provider keeps generating. The `withTimeout()` deadline is a timer on the same loop, so it does not end the connection sooner. |
+| FrankenPHP (worker mode) | The script keeps running and the answer stops as described above. The provider connection closes when the request ends ({ref}`runtime-reference-frankenphp-fpm`). |
 | PHP-FPM behind nginx | nginx closes the FastCGI connection, and PHP ends the script at the next write. The provider connection closes with the request. No stopped answer is recorded. |
 
 ## Several calls at once

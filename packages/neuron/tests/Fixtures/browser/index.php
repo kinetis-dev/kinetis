@@ -13,9 +13,10 @@ declare(strict_types=1);
 // GET /?mark={file}, with {file} under KINETIS_NEURON_STATE_DIR, runs
 // one answer from the stand-in provider at KINETIS_NEURON_PROVIDER,
 // which records in {file} whether its client left. Any other request
-// answers 204, which is how a driver knows the stack is up. The handler appends to {file}.server what the emitter saw once
-// it returned; under PHP-FPM, which ends the script at the first write
-// after the client left, it never returns.
+// answers 204, which is how a driver knows the stack is up. The handler
+// appends to {file}.server what the emitter saw once it returned; under
+// PHP-FPM, which ends the script at the first write after the client
+// left, it never returns.
 
 require __DIR__ . '/../../../vendor/autoload.php';
 

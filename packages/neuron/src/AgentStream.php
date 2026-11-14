@@ -9,6 +9,7 @@ use Kinetis\Http\Responses\PlainTextResponse;
 use Kinetis\Http\StreamedResponse;
 use NeuronAI\Agent\Adapters\AGUIAdapter;
 use NeuronAI\Agent\Adapters\VercelAIAdapter;
+use NeuronAI\Workflow\Streaming\ProtocolEvent;
 use NeuronAI\Workflow\Streaming\SSEEncoder;
 use Throwable;
 
@@ -29,7 +30,7 @@ final readonly class AgentStream
      * stream adapter is the one given here. It is consumed when the
      * response is emitted, after the status and the adapter's headers.
      *
-     * @param Generator<int, mixed, mixed, mixed> $events
+     * @param Generator<int, ProtocolEvent, mixed, mixed> $events
      */
     public function response(Generator $events): StreamedResponse
     {
