@@ -35,11 +35,13 @@ final class ResponseStream implements StreamInterface
         private readonly HttpRequest $request,
     ) {}
 
+    #[\Override]
     public function eof(): bool
     {
         return $this->ended && $this->buffer === '';
     }
 
+    #[\Override]
     public function read(int $length): string
     {
         if ($this->buffer === '') {
@@ -52,6 +54,7 @@ final class ResponseStream implements StreamInterface
         return $data;
     }
 
+    #[\Override]
     public function readLine(): string
     {
         while (($end = strpos($this->buffer, "\n")) === false) {
@@ -74,6 +77,7 @@ final class ResponseStream implements StreamInterface
     }
 
     /** Cancels the transport response if the body has not been read to its end. */
+    #[\Override]
     public function close(): void
     {
         $this->ended = true;

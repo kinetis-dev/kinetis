@@ -43,6 +43,7 @@ final readonly class NeuronHttpClient implements HttpClientInterface
         $this->prefix = rtrim($baseUrl, '/') . '/';
     }
 
+    #[\Override]
     public function request(HttpRequest $request): HttpResponse
     {
         $response = $this->send($request);
@@ -60,6 +61,7 @@ final readonly class NeuronHttpClient implements HttpClientInterface
         return $converted;
     }
 
+    #[\Override]
     public function stream(HttpRequest $request): StreamInterface
     {
         $response = $this->send($request);
