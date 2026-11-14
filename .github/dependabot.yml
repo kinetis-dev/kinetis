@@ -137,6 +137,11 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "composer"
+    directory: "/packages/neuron"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "composer"
     directory: "/packages/storage-s3"
     schedule:
       interval: "weekly"

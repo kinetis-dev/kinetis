@@ -270,6 +270,7 @@ search-engines
 search-opensearch
 search-elasticsearch
 aws-sigv4
+neuron
 ```
 
 ```{toctree}

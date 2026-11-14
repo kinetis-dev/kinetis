@@ -367,6 +367,15 @@ like `kinetis/revolt-http-client`, not dependent on it either:
 - The signature itself is held to AWS's published SigV4 test vectors — a fixed date and the static `AKIDEXAMPLE` credentials — run end to end through the client, each published `Authorization` header asserted exactly. That is what makes the canonical form above a checked claim rather than a described one.
 - Depends on `kinetis/revolt-http-client`, `async-aws/core`, `nyholm/psr7` (the PSR-17 factories the internal `Psr18Client` is built with, and the PSR-7 request and stream the outgoing request is built from), `psr/http-client`, `psr/http-message`, `symfony/http-client`, `symfony/http-client-contracts`, and `amphp/http-client` (named directly: `SignedTransport` pins the AMPHP client its own requests run through). `async-aws/core` supplies the credential provider interface, types and providers only; the signing algorithm is this package's own. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
 
+## `packages/neuron` (`kinetis/neuron`)
+
+Separate Composer package, not part of `kinetis/framework` core and not
+dependent on it: `kinetis/framework` appears only in `require-dev`.
+
+- `Kinetis\Neuron\NeuronHttpClient implements NeuronAI\HttpClient\HttpClientInterface` — `__construct(Kinetis\RevoltHttpClient\Http $http, string $baseUrl)`. Applies `$baseUrl` as `$http`'s base URL; an absolute request URI under it is sent relative to it, and any other absolute URI is passed to `Http` unchanged, which refuses it. `request()` and `stream()` send once through `Http::send()`: an array body as `json`, a string body as `body`, a non-null `HttpRequest::$timeout` as the call's `timeout`. A status of 400 or more raises `HttpException::statusError()` with the body read under the ceiling; every `HttpRequestException` becomes `HttpException::networkError()` with it as the previous exception; a multipart request is refused before it is sent. Immutable and request-neutral. See {doc}`neuron`.
+- `Kinetis\Neuron\ResponseStream implements NeuronAI\HttpClient\StreamInterface` — `@internal`. Reads `HttpResponse::chunks()` lazily: `read()` returns at most the requested length and keeps the rest of the current piece, `readLine()` returns through `\n` or the remainder at the end, `eof()` is true once the body has ended and nothing is left, and `close()` discards the response, cancelling the transport.
+- Depends on `kinetis/revolt-http-client` and `neuron-core/neuron-ai`. Own `composer.json`/`phpunit.xml`/`phpstan.neon`.
+
 ## `packages/storage-s3` (`kinetis/storage-s3`)
 
 Separate Composer package, not part of `kinetis/framework` core.
@@ -687,7 +696,7 @@ vendor dependencies out of core.
   {doc}`queue-sql`, {doc}`queue-sqs`, {doc}`queue-rabbitmq`,
   {doc}`queue-failed-jobs`,
   {doc}`storage`, {doc}`storage-s3`, {doc}`revolt-http-client`,
-  {doc}`aws-sigv4`, {doc}`mailer`, {doc}`search-engines`,
+  {doc}`aws-sigv4`, {doc}`neuron`, {doc}`mailer`, {doc}`search-engines`,
   {doc}`search-opensearch`, {doc}`search-elasticsearch`,
   {doc}`broadcasting`, {doc}`telemetry`, {doc}`auth`, {doc}`auth-jwt`,
   {doc}`session`, {doc}`authorization`, {doc}`mcp`, {doc}`mcp-docs`,

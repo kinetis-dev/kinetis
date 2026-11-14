@@ -126,6 +126,7 @@ jobs:
           - { name: storage, dir: packages/storage, phpunit: true }
           - { name: revolt-http-client, dir: packages/revolt-http-client, phpunit: true }
           - { name: aws-sigv4, dir: packages/aws-sigv4, phpunit: true }
+          - { name: neuron, dir: packages/neuron, phpunit: true }
           - { name: storage-s3, dir: packages/storage-s3, phpunit: true }
           - { name: queue-sqs, dir: packages/queue-sqs, phpunit: true }
           - { name: queue-rabbitmq, dir: packages/queue-rabbitmq, phpunit: true }

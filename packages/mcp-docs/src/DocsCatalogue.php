@@ -72,6 +72,7 @@ final class DocsCatalogue
             new DocsPage('search-opensearch', 'Search (OpenSearch)', 'kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client'),
             new DocsPage('search-elasticsearch', 'Search (Elasticsearch)', 'kinetis/search-elasticsearch: Elasticsearch client construction, non-blocking via kinetis/revolt-http-client'),
             new DocsPage('aws-sigv4', 'AWS request signing (SigV4)', 'Sign requests for one trusted AWS origin, including Amazon OpenSearch Service'),
+            new DocsPage('neuron', 'Neuron AI', 'kinetis/neuron: run Neuron AI providers over kinetis/revolt-http-client — non-blocking, origin-pinned and bounded — with the request scoping and worker exclusions they need'),
             new DocsPage('mcp', 'Model Context Protocol (MCP)', 'Expose application tools and resources over stdio or guarded HTTP'),
             new DocsPage('mcp-docs', 'MCP Documentation Server', 'Install the standalone server and read Kinetis pages as MCP resources, whole, as bounded line windows or through a literal search of one page'),
             new DocsPage('orbitron', 'Orbitron', 'kinetis/orbitron: a development-only construction harness — what it is, the skeleton quick start, and where the full command and MCP contract lives'),

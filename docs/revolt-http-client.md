@@ -402,3 +402,4 @@ transport must uphold.
 - {doc}`concurrency` — running tasks concurrently.
 - {doc}`telemetry` — a span for every outgoing request.
 - {doc}`aws-sigv4` — signing requests to AWS endpoints.
+- {doc}`neuron` — running Neuron AI providers over this client.
