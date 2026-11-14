@@ -127,32 +127,86 @@ final readonly class SupportAssistant
 }
 ```
 
-`SupportAssistant` is not registered, so the container builds it for
-each request ({doc}`container`). `chat()` throws `AgentException` until
-`setThreadId()` names the conversation. Neuron's default message store
-keeps the history in the `Agent`, so it ends with the request.
+`chat()` throws `AgentException` until `setThreadId()` names the
+conversation. Neuron's default message store keeps the history in the
+`Agent`, so it ends with the request.
 
-## Stream an answer
-
-`Agent::stream()` returns a generator. The provider reads the answer as
-it arrives, and each read suspends the Fiber:
+A controller receives the assistant and answers with JSON:
 
 ```{code-block} php
-use NeuronAI\Chat\Messages\Stream\Chunks\TextChunk;
-use NeuronAI\Chat\Messages\UserMessage;
+namespace App\Assistant;
 
-$answer = '';
+use Kinetis\Http\Attributes\Body;
+use Kinetis\Http\Attributes\Post;
 
-foreach ($agent->stream(new UserMessage($question)) as $chunk) {
-    if ($chunk instanceof TextChunk) {
-        $answer .= $chunk->content;
+final readonly class AnswerController
+{
+    public function __construct(private SupportAssistant $assistant) {}
+
+    /** @return array{answer: ?string} */
+    #[Post('/assistant/{conversationId}/answer')]
+    public function answer(string $conversationId, #[Body] Question $question): array
+    {
+        return ['answer' => $this->assistant->answer($conversationId, $question->text)];
     }
 }
 ```
 
-The `withTimeout()` deadline covers the whole stream. When a stream
-stops before its end, through a `break`, an exception or a dropped
-generator, the client cancels the connection to the provider.
+`Question` is an application DTO. Each request follows one path:
+
+1. At boot, `bootstrap.php` registers the one `Providers` instance.
+2. The route attribute maps the request to `AnswerController::answer()`.
+3. Neither `AnswerController` nor `SupportAssistant` is registered, so
+   the container builds both for this request and injects the shared
+   `Providers` into `SupportAssistant` ({doc}`container`).
+4. `answer()` builds a new provider and a new `Agent`, runs it, and both
+   end with the request.
+5. The returned array is the JSON body ({doc}`routing-validation`).
+
+## Stream an answer
+
+`Agent::stream()` returns a generator that yields the answer as the
+provider reads it. Each read suspends the Fiber, so the worker serves
+other requests while the provider writes. Add a streaming method to
+`SupportAssistant` that hands each piece of text to the caller as it
+arrives:
+
+```{code-block} php
+namespace App\Assistant;
+
+use Closure;
+use NeuronAI\Agent\Agent;
+use NeuronAI\Chat\Messages\Stream\Chunks\TextChunk;
+use NeuronAI\Chat\Messages\UserMessage;
+
+final readonly class SupportAssistant
+{
+    // __construct() and answer() as above
+
+    /** @param Closure(string): void $onText */
+    public function streamAnswer(string $conversationId, string $question, Closure $onText): void
+    {
+        $chunks = Agent::make()
+            ->setAiProvider($this->providers->openAi())
+            ->setInstructions('Answer questions about orders. Be brief.')
+            ->setThreadId($conversationId)
+            ->stream(new UserMessage($question));
+
+        foreach ($chunks as $chunk) {
+            if ($chunk instanceof TextChunk) {
+                $onText($chunk->content);
+            }
+        }
+    }
+}
+```
+
+The stream also yields tool calls, reasoning and other chunk types;
+`TextChunk` carries the answer's text. The `withTimeout()` deadline
+covers the whole stream. When a stream stops before its end, through a
+`break`, an exception thrown by `$onText` or a dropped generator, the
+client cancels the connection to the provider. To send the stream to a
+browser, use `AgentStream` ({ref}`neuron-browser-stream`).
 
 (neuron-browser-stream)=
 
@@ -196,8 +250,10 @@ final readonly class AssistantController
 }
 ```
 
-`Question` is an application DTO. The provider comes from a factory
-method that stops its stream when the browser leaves:
+The controller follows the same path as `AnswerController`, and builds
+the agent itself because it hands the run to `AgentStream`. The provider
+comes from a second `Providers` method that stops its stream when the
+browser leaves:
 
 ```{code-block} php
 use NeuronAI\HttpClient\StoppableHttpClient;
