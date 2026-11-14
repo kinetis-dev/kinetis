@@ -621,6 +621,9 @@
                 "mcp-protocol",
                 "revolt-http-client"
             ],
+            "requireDevExtra": {
+                "nikic/php-parser": "^5.8.0"
+            },
             "require": {
                 "neuron-core/neuron-ai": "^4.1.24"
             },

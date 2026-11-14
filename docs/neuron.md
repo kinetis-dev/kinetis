@@ -552,6 +552,47 @@ requests:
 | `UsageMeter` from Neuron's evaluation tools | It records into a static, shared by every request in the worker. |
 | Streaming an answer to the client under RoadRunner | RoadRunner answers a `StreamedResponse` with `501` ({doc}`runtime-adapters`). |
 
+(neuron-phpstan-rule)=
+
+### Flagging these with PHPStan
+
+`Kinetis\Neuron\Linting\NoWorkerUnsafeNeuronRule` is a PHPStan rule for
+application code. Like the framework's `NoBlockingIoRule`
+({ref}`non-blocking-application-io`), it ships under the package's main
+autoload and needs nothing beyond PHPStan. Add it to the application's
+`phpstan.neon`:
+
+```{code-block} yaml
+:caption: phpstan.neon
+
+rules:
+    - Kinetis\Neuron\Linting\NoWorkerUnsafeNeuronRule
+```
+
+Every report carries the identifier `kinetis.neuronWorkerUnsafe` and a
+message naming the reason from the table above and what to use instead.
+It reports:
+
+- `new X(...)` and `X::make(...)` when X's constructor takes a nullable
+  `NeuronAI\HttpClient\HttpClientInterface` and the call leaves it out or
+  passes a literal `null`, which is how Neuron falls back to
+  `CurlHttpClient`. Every provider, toolkit tool and `McpConnector` built
+  without a `NeuronHttpClient` is reported this way.
+- `new CurlHttpClient` and `new AmpHttpClient`.
+- `parallelToolCalls()` on an `Agent`, unless its argument is a literal
+  `false`.
+- `new` of `FilePersistence`, `DatabasePersistence`, `FileMessageStore`,
+  `SQLMessageStore` and `PhpSerializer`.
+- `new StdioTransport`, `new SseHttpTransport`, and an `McpConnector`
+  whose configuration is an array literal with a `command` key or with
+  `async` set to `true`.
+- `UsageMeter::watch()` and `new UsageMeter`.
+
+It does not report a workflow interrupt and resume, streaming under
+RoadRunner, an `McpConnector` configuration that is not an array literal,
+a call whose class name is an expression or whose arguments are spread,
+or an object built outside the analysed code, such as by a library.
+
 ## See also
 
 - {doc}`revolt-http-client` — the `Http` client: base URLs, deadlines,

@@ -77,7 +77,7 @@ tutorial, then read whichever section you have reached.
 - [Search (OpenSearch)](https://kinetis.dev/docs/search-opensearch.html): kinetis/search-opensearch: OpenSearch client construction, non-blocking via kinetis/revolt-http-client.
 - [Search (Elasticsearch)](https://kinetis.dev/docs/search-elasticsearch.html): Configure the Elasticsearch client, client major version and API-key authentication.
 - [AWS request signing (SigV4)](https://kinetis.dev/docs/aws-sigv4.html): kinetis/aws-sigv4: a PSR-18 client signing requests with AWS Signature Version 4 for one configured origin, non-blocking via kinetis/revolt-http-client — usable standalone.
-- [Neuron AI](https://kinetis.dev/docs/neuron.html): kinetis/neuron: Neuron AI agents on Kinetis — providers over kinetis/revolt-http-client (non-blocking, origin-pinned, bounded), the application's MCP tools in process, remote MCP servers, browser streaming, and GenAI inference spans.
+- [Neuron AI](https://kinetis.dev/docs/neuron.html): kinetis/neuron: Neuron AI agents on Kinetis — providers over kinetis/revolt-http-client (non-blocking, origin-pinned, bounded), the application's MCP tools in process, remote MCP servers, browser streaming, GenAI inference spans, and a PHPStan rule flagging the Neuron features unsafe in a persistent worker.
 
 ## AI agents
 
