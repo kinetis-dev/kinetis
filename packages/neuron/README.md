@@ -95,9 +95,12 @@ $agent->addTool($connector->tools());
 
 `Kinetis\Neuron\Linting\NoWorkerUnsafeNeuronRule` is a PHPStan rule that
 reports the Neuron features unsafe in a persistent worker: a provider,
-tool or connector built without an HTTP client, Neuron's own clients,
-parallel tool calls, the file and PDO stores, the stdio and SSE MCP
-transports, and `UsageMeter` ([guide](https://kinetis.dev/docs/neuron.html#neuron-phpstan-rule)):
+tool, connector, vector store or embeddings provider built without an
+HTTP client, Neuron's own clients, parallel tool calls, the file,
+database and Redis stores, the unrestricted workflow serializers, the
+database, file-system and AWS toolkits, the file, database and graph RAG
+components, the stdio and SSE MCP transports, and `UsageMeter`
+([guide](https://kinetis.dev/docs/neuron.html#neuron-phpstan-rule)):
 
 ```yaml
 rules:

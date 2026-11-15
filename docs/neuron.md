@@ -547,7 +547,17 @@ requests:
 | `AmpHttpClient` | `withBaseUri()` and `withHeaders()` change the instance they are called on, and it reads a body with no size limit. A shared instance carries one request's settings into the next. |
 | `Agent::parallelToolCalls()` (`ParallelToolNode`) | It forks the worker process to run tools. |
 | `FilePersistence`, `DatabasePersistence`, `FileMessageStore`, `SQLMessageStore` | Blocking file and PDO I/O. |
-| `PhpSerializer` | It calls `unserialize()` with no class restriction. |
+| `RedisPersistence`, `EloquentPersistence`, `EloquentMessageStore` | Blocking phpredis and Eloquent database I/O. |
+| `PhpSerializer`, `IgbinarySerializer` | They unserialize workflow records with no class restriction. |
+| `MySQLToolkit`, `PGSQLToolkit` and their tools | Blocking PDO queries. |
+| `FileSystemToolkit` and its tools | Blocking file I/O; `BashTool` waits on a child process. |
+| `SESTool` from the AWS toolkit | The AWS SDK client sends synchronously. |
+| `FileDataLoader`, `PdfReader` | Blocking file reads; `PdfReader` waits on a `pdftotext` child process. |
+| `FileVectorStore`, `MariaDBVectorStore`, `MongoDBVectorStore` | Blocking file, PDO and MongoDB driver I/O. |
+| `TypesenseVectorStore` | It sends through the Typesense SDK client, for which Kinetis has no non-blocking transport. |
+| `Neo4jGraphStore` | The Bolt driver blocks on its socket. |
+| `FileEvaluationCache` from Neuron's evaluation tools | Blocking file I/O. |
+| `OpenAISpeechToText`, `ElevenLabsSpeechToText` | They upload the audio as a multipart body, which `NeuronHttpClient` refuses ({ref}`neuron-call-fails`). |
 | A workflow interrupt and resume | A resumed node runs again from its start and repeats whatever it did before the interrupt that was not memoized. |
 | `StdioTransport` for MCP, an `McpConnector` configured with `command` | `proc_open()` and blocking pipe reads. |
 | `SseHttpTransport` for MCP, an `McpConnector` configured with `async: true` | `fopen()` on the server URL blocks. |
@@ -578,22 +588,31 @@ It reports:
 - `new X(...)` and `X::make(...)` when X's constructor takes a nullable
   `NeuronAI\HttpClient\HttpClientInterface` and the call leaves it out or
   passes a literal `null`, which is how Neuron falls back to
-  `CurlHttpClient`. Every provider, toolkit tool and `McpConnector` built
-  without a `NeuronHttpClient` is reported this way.
+  `CurlHttpClient`. Every provider, toolkit tool, `McpConnector`, HTTP
+  vector store and embeddings provider built without a `NeuronHttpClient`
+  is reported this way.
 - `new CurlHttpClient` and `new AmpHttpClient`.
 - `parallelToolCalls()` on an `Agent`, unless its argument is a literal
   `false`.
-- `new` of `FilePersistence`, `DatabasePersistence`, `FileMessageStore`,
-  `SQLMessageStore` and `PhpSerializer`.
+- `new` of `FilePersistence`, `DatabasePersistence`, `RedisPersistence`,
+  `EloquentPersistence`, `FileMessageStore`, `SQLMessageStore`,
+  `EloquentMessageStore`, `PhpSerializer` and `IgbinarySerializer`.
+- `new` and `make()` of the MySQL, PGSQL, file-system and AWS toolkits
+  and of each of their tools.
+- `new FileDataLoader`, `FileDataLoader::for()`, `new PdfReader`,
+  `new Neo4jGraphStore`, `new FileEvaluationCache`, and `new` of
+  `FileVectorStore`, `MariaDBVectorStore` and `MongoDBVectorStore`.
 - `new StdioTransport`, `new SseHttpTransport`, and an `McpConnector`
   whose configuration is an array literal with a `command` key or with
   `async` set to `true`.
 - `UsageMeter::watch()` and `new UsageMeter`.
 
 It does not report a workflow interrupt and resume, streaming under
-RoadRunner, an `McpConnector` configuration that is not an array literal,
-a call whose class name is an expression or whose arguments are spread,
-or an object built outside the analysed code, such as by a library.
+RoadRunner, `TypesenseVectorStore`, a speech-to-text provider given a
+`NeuronHttpClient`, an `McpConnector` configuration that is not an array
+literal, a call whose class name is an expression or whose arguments are
+spread, or an object built outside the analysed code, such as by a
+library.
 
 ## See also
 
