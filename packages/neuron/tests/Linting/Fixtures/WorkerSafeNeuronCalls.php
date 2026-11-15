@@ -10,6 +10,10 @@ use NeuronAI\Agent\Agent;
 use NeuronAI\MCP\McpConnector;
 use NeuronAI\Providers\Anthropic\Anthropic;
 use NeuronAI\Providers\OpenAI\OpenAI;
+use NeuronAI\RAG\DataLoader\StringDataLoader;
+use NeuronAI\RAG\Embeddings\OpenAIEmbeddingsProvider;
+use NeuronAI\RAG\VectorStore\MemoryVectorStore;
+use NeuronAI\RAG\VectorStore\QdrantVectorStore;
 
 final class WorkerSafeNeuronCalls
 {
@@ -31,5 +35,10 @@ final class WorkerSafeNeuronCalls
 
         new McpConnector($config, $client);
         new McpConnector(['url' => 'https://tools.example.com/mcp', 'async' => false], $client);
+
+        new QdrantVectorStore('http://qdrant:6333/collections/docs', httpClient: $client);
+        new OpenAIEmbeddingsProvider('key', 'model', 1024, $client);
+        new MemoryVectorStore();
+        StringDataLoader::for('text');
     }
 }
