@@ -195,5 +195,7 @@ buffering rules.
   transport, credential, body and failure contracts.
 - {doc}`search-opensearch` — what an `OpenSearch\Client` can do once
   bound.
+- {doc}`neuron` — Amazon Bedrock providers for Neuron AI over a signing
+  client ({ref}`neuron-bedrock`).
 - {doc}`revolt-http-client` — the non-blocking HTTP client the transport
   is built on.

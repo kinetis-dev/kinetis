@@ -107,6 +107,7 @@ providers and agents do hold request data:
 | The provider (`OpenAI`, `Anthropic`, ...) | Request | Every agent run sets the system prompt and the tool list on the provider it uses. A shared provider carries one request's instructions and tools into the next. |
 | The `Agent` | Request | It holds the chat history, the thread ID and any pending tool call. |
 | `McpTools` and the tools it returns | Request | They run each call with the request scope they were built in ({ref}`neuron-mcp-tools`). |
+| `BedrockProvider` | Request | Like the other providers, it holds the system prompt, the tools and a stream's state; the `SigV4SigningClient` under it is application-scoped ({ref}`neuron-bedrock`). |
 
 Build both inside the request:
 
@@ -514,8 +515,9 @@ and the embeddings providers in the request, like the provider.
   uses serves it too.
 - **`AwsBedrockEmbeddingsProvider`** takes aws-sdk-php's
   `BedrockRuntimeClient` and has no `HttpClientInterface` parameter. It
-  sends through the AWS SDK, which blocks the worker
-  ({ref}`neuron-not-in-worker`).
+  sends through the AWS SDK, which blocks the worker. Use
+  `Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider` instead
+  ({ref}`neuron-bedrock`).
 - **`MemoryVectorStore`** keeps its documents in the object. Build it
   in the request; registered in the application scope it would carry
   one request's documents into the next and grow without bound.
@@ -618,15 +620,17 @@ carrying the provider, the model and the token usage
   `observe()` adds no tool span.
 - **Provider names.** Neuron's provider classes map to OpenTelemetry's
   `gen_ai.system` names: `OpenAI` to `openai`, `Anthropic` to
-  `anthropic`, `Gemini` to `gcp.gemini`, and so on. A subclass such as
+  `anthropic`, `Gemini` to `gcp.gemini`, `BedrockProvider` to
+  `aws.bedrock`, and so on. A subclass such as
   `OpenAILike` can reach any service and reports `_OTHER`.
 
 (neuron-call-fails)=
 
 ## When a call fails
 
-Every failure is a `NeuronAI\Exceptions\HttpException`, the exception
-Neuron's providers expect:
+Every failure of a call through `NeuronHttpClient` is a
+`NeuronAI\Exceptions\HttpException`, the exception Neuron's providers
+expect. The Bedrock providers fail differently ({ref}`neuron-bedrock`).
 
 - **A status of 400 or more** raises `HttpException::statusError()`.
   `$e->response` holds the status and the body, read under the byte
@@ -685,6 +689,110 @@ has no option to route the token request through another client.
 Neuron does not require `google/auth`; install it to use these
 providers.
 
+(neuron-bedrock)=
+
+## Amazon Bedrock
+
+Neuron's `BedrockRuntime` provider and `AwsBedrockEmbeddingsProvider`
+send through aws-sdk-php, which blocks the worker. Use
+`Kinetis\Neuron\Bedrock\BedrockProvider` and
+`Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider` instead. They call
+Bedrock Runtime's Converse, ConverseStream and InvokeModel APIs through a
+`Kinetis\AwsSigV4\SigV4SigningClient` ({doc}`aws-sigv4`), so a call
+suspends the calling Fiber like any other provider call. aws-sdk-php is
+not needed.
+
+Build the signing client once at boot, for the region's Bedrock Runtime
+endpoint and the `bedrock` signing service:
+
+```{code-block} php
+:caption: bootstrap.php
+
+use App\Assistant\BedrockProviders;
+use Kinetis\AwsSigV4\SignedTransport;
+use Kinetis\AwsSigV4\SigV4SigningClient;
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+
+return static function (AppScope $app, Config $config): void {
+    $region = $config->required('AWS_REGION');
+
+    $app->instance(BedrockProviders::class, new BedrockProviders(new SigV4SigningClient(
+        origin: "https://bedrock-runtime.{$region}.amazonaws.com",
+        region: $region,
+        service: 'bedrock',
+        transport: SignedTransport::create(['timeout' => 120, 'max_duration' => 120]),
+    )));
+};
+```
+
+```{code-block} php
+namespace App\Assistant;
+
+use Kinetis\AwsSigV4\SigV4SigningClient;
+use Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider;
+use Kinetis\Neuron\Bedrock\BedrockProvider;
+
+final readonly class BedrockProviders
+{
+    public function __construct(private SigV4SigningClient $bedrock) {}
+
+    public function claude(): BedrockProvider
+    {
+        return new BedrockProvider($this->bedrock, 'anthropic.claude-3-haiku-20240307-v1:0', ['maxTokens' => 1024]);
+    }
+
+    public function embeddings(): BedrockEmbeddingsProvider
+    {
+        return new BedrockEmbeddingsProvider($this->bedrock);
+    }
+}
+```
+
+Inject `BedrockProviders` where `SupportAssistant` injects `Providers`,
+and pass `claude()` to `setAiProvider()` ({ref}`neuron-scope-request`).
+
+- **Scope.** The signing client holds resolved credentials and reuses its
+  connections, and keeps no request state, so one instance serves the
+  worker. `BedrockProvider` holds the system prompt, the tools and a
+  stream's state: build it in the request, like Neuron's providers.
+- **Credentials** come from the signing client's default chain
+  ({doc}`aws-sigv4`, "Credentials"). The role needs
+  `bedrock:InvokeModel`, and `bedrock:InvokeModelWithResponseStream` to
+  stream.
+- **The deadline is the transport's.** `SignedTransport::create()`
+  bounds a request at 30 seconds idle and 30 in total, short for a model
+  answer; the example allows 120 for both.
+- **The byte ceiling** is the providers' last argument: 8 MiB for
+  `BedrockProvider`, 1 MiB for `BedrockEmbeddingsProvider`. Every
+  response byte counts, a streamed answer's included. Past it the call
+  throws and the connection is closed.
+- **The model** is a model ID or an inference profile ID or ARN. It is
+  sent in the request path to the signing client's origin; the provider
+  never chooses a host.
+- **What is sent** is what Neuron's `BedrockRuntime` sends: Neuron's own
+  Bedrock message and tool mappers, the last four cache points,
+  structured output as the schema appended to the system prompt for that
+  call, and `inferenceConfig` as given. `BedrockEmbeddingsProvider` sends
+  the Titan text embeddings body, `inputText`.
+- **Nothing is sent twice.** A call is one signed request, with no retry
+  in the provider, the signing client or its transport.
+
+Every failure is a `NeuronAI\Exceptions\ProviderException`:
+
+- **A status outside 2xx** names the status and Bedrock's error
+  `message`, read under the byte ceiling.
+- **A signing-client failure** keeps the `Kinetis\AwsSigV4\Exception`
+  behind it as `$e->getPrevious()`. After a `NetworkFailureException`,
+  Bedrock may have run and billed the request
+  ({doc}`aws-sigv4`, "When a request fails").
+- **A stream** that carries an exception or error event names its type
+  and message. A frame that fails its checksum, a stream cut inside a
+  frame, and a stream that ends before Bedrock's `messageStop` each fail
+  with a fixed message.
+
+No message holds the request or a credential.
+
 (neuron-not-in-worker)=
 
 ## What not to use in a worker
@@ -702,7 +810,8 @@ requests:
 | `PhpSerializer`, `IgbinarySerializer` | They unserialize workflow records with no class restriction. |
 | `MySQLToolkit`, `PGSQLToolkit` and their tools | Blocking PDO queries. |
 | `FileSystemToolkit` and its tools | Blocking file I/O; `BashTool` waits on a child process. |
-| `SESTool` from the AWS toolkit, `AwsBedrockEmbeddingsProvider` | The AWS SDK client sends synchronously. |
+| `SESTool` from the AWS toolkit | The AWS SDK client sends synchronously. |
+| `BedrockRuntime`, `AwsBedrockEmbeddingsProvider` | The AWS SDK client sends synchronously. Use `BedrockProvider` and `BedrockEmbeddingsProvider` ({ref}`neuron-bedrock`). |
 | `FileDataLoader`, `PdfReader` | Blocking file reads; `PdfReader` waits on a `pdftotext` child process. |
 | `FileVectorStore`, `MariaDBVectorStore`, `MongoDBVectorStore` | Blocking file, PDO and MongoDB driver I/O. |
 | `TypesenseVectorStore` | It sends through the Typesense SDK client, for which Kinetis has no non-blocking transport. |
@@ -751,6 +860,7 @@ It reports:
   `EloquentMessageStore`, `PhpSerializer` and `IgbinarySerializer`.
 - `new` and `make()` of the MySQL, PGSQL, file-system and AWS toolkits
   and of each of their tools.
+- `new BedrockRuntime` and `new AwsBedrockEmbeddingsProvider`.
 - `new FileDataLoader`, `FileDataLoader::for()`, `new PdfReader`,
   `new Neo4jGraphStore`, `new FileEvaluationCache`, and `new` of
   `FileVectorStore`, `MariaDBVectorStore` and `MongoDBVectorStore`.
@@ -760,8 +870,7 @@ It reports:
 - `UsageMeter::watch()` and `new UsageMeter`.
 
 It does not report a workflow interrupt and resume, streaming under
-RoadRunner, `TypesenseVectorStore`, `AwsBedrockEmbeddingsProvider`,
-an Elasticsearch or OpenSearch store given a client built outside the
+RoadRunner, `TypesenseVectorStore`, an Elasticsearch or OpenSearch store given a client built outside the
 Kinetis factories, a speech-to-text provider given a
 `NeuronHttpClient`, an `McpConnector` configuration that is not an array
 literal, a call whose class name is an expression or whose arguments are
