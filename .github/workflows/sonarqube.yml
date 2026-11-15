@@ -38,6 +38,9 @@ env:
 jobs:
   sonarqube:
     name: SonarQube Cloud scan
+    # Dependabot PRs get no SONAR_TOKEN, so the scan cannot authenticate.
+    # Their dependency changes are scanned on main after merge.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     # The databases exist for one reason: persistence's env-gated
     # tests/Integration suite must run *under pcov here* so the native
