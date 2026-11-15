@@ -304,11 +304,11 @@ final class HttpResponse
         try {
             while (($piece = $this->read($this->nextPiece(...))) !== null) {
                 if (!$decoding) {
-                    $decoder = $this->decode(fn (): ?ContentDecoder => ContentDecoder::for($this->headers()['content-encoding'] ?? []));
+                    $decoder = $this->decoderFor();
                     $decoding = true;
                 }
 
-                $decoded = $decoder === null ? [$piece] : $this->decode(fn (): Generator => $decoder->push($piece));
+                $decoded = $decoder === null ? [$piece] : $this->slices($decoder->push($piece));
 
                 foreach ($decoded as $output) {
                     // The Amp transport runs the progress guard only when it
@@ -325,7 +325,7 @@ final class HttpResponse
                 }
             }
 
-            foreach ($decoder === null ? [] : $this->decode($decoder->finish(...)) as $output) {
+            foreach ($decoder === null ? [] : $this->slices($decoder->finish()) as $output) {
                 $received += strlen($output);
 
                 if ($received > $this->budget->maxBytes) {
@@ -463,22 +463,14 @@ final class HttpResponse
     }
 
     /**
-     * Runs a decoding step and maps its failure to the `Conversion`
-     * failure its fixed text names. A step that returns a value runs here;
-     * one that returns a generator is wrapped by {@see slices()} and runs
-     * only as the caller pulls from it, one slice at a time, which is what
-     * lets the caller count each slice before the next is decoded.
-     *
-     * @template T
-     * @param Closure(): T $step
-     * @return T|list<string>
+     * The decoder the response's Content-Encoding names, or null when it
+     * names none; an encoding the client does not decode is the
+     * `Conversion` failure its fixed text names.
      */
-    private function decode(Closure $step): mixed
+    private function decoderFor(): ?ContentDecoder
     {
         try {
-            $result = $step();
-
-            return $result instanceof Generator ? $this->slices($result) : $result;
+            return ContentDecoder::for($this->headers()['content-encoding'] ?? []);
         } catch (UnexpectedValueException $failure) {
             $this->releaseOnce();
 
@@ -489,7 +481,9 @@ final class HttpResponse
     /**
      * Drains a decoder's output one slice at a time while the caller
      * counts, so the decoded bytes in memory never run more than one
-     * slice past the ceiling.
+     * slice past the ceiling. The decoder's generators run only as this
+     * one is pulled, so a corrupt or truncated stream fails here, as the
+     * `Conversion` failure its fixed text names.
      *
      * @param Generator<int, string> $slices
      * @return Generator<int, string>
