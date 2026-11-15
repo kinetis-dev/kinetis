@@ -55,7 +55,9 @@ Installing this package auto-registers, via `extra.kinetis`:
   wiring: one server span per request around every global middleware
   (method, status, `php.memory.usage`; an incoming `traceparent` joins
   the caller's trace), boot phases, per-middleware timing, route match,
-  hydration, controller, `concurrently()` tasks, events, MCP calls, and — this is
+  hydration, controller, `concurrently()` tasks, events, MCP calls, the
+  model inference of a Neuron agent
+  [`kinetis/neuron`](https://github.com/kinetis-dev/neuron) observes, and — this is
   the whole of Kinetis-owned SQL and queue tracing, with nothing to
   wrap by hand — for every SQL client
   [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)

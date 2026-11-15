@@ -152,6 +152,7 @@ repository, and README:
 | [`kinetis/mcp`](https://github.com/kinetis-dev/mcp) | Native Model Context Protocol servers over stdio and Streamable HTTP |
 | [`kinetis/mcp-docs`](https://github.com/kinetis-dev/mcp-docs) | The Kinetis documentation as MCP resources, plus a tool for a bounded line window of a page, served on its own or composed by [`kinetis/orbitron`](https://github.com/kinetis-dev/orbitron) — framework-agnostic, with [`kinetis/mcp-protocol`](https://github.com/kinetis-dev/mcp-protocol) its only Kinetis dependency |
 | [`kinetis/migrations`](https://github.com/kinetis-dev/migrations) | A thin database migration runner — raw SQL `up()`/`down()`, no schema-diffing |
+| [`kinetis/neuron`](https://github.com/kinetis-dev/neuron) | Neuron AI agents on Kinetis — a non-blocking provider HTTP client, the application's MCP tools in process, browser streaming, and inference spans |
 | [`kinetis/orm`](https://github.com/kinetis-dev/orm) | A data mapper over [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder) — attributed entities, typed repositories, and a unit of work with change tracking and a transactional flush |
 | [`kinetis/persistence`](https://github.com/kinetis-dev/persistence) | Runtime-matched MySQL/Postgres drivers and a transaction safety net — usable standalone |
 | [`kinetis/query-builder`](https://github.com/kinetis-dev/query-builder) | A thin, parameterized SQL query builder for MySQL/Postgres — not an ORM |

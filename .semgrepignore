@@ -24,3 +24,12 @@ packages/revolt-http-client/tests/Fixtures/reflect-server.php
 # whether the client went away; the tainted-filename rule's SSRF concern
 # doesn't apply to a fixture whose only caller is the test itself.
 packages/revolt-http-client/tests/Fixtures/stream-server.php
+
+# A test-only stand-in provider (started by NeuronHttpClientTest via
+# `php -S` on 127.0.0.1, never deployed). `/v1/echo` returns what the
+# client sent as Content-Type: application/json, not an HTML context, and
+# its `mark` query parameter is a temporary file path the test creates
+# and passes in; neither the echoed-request XSS rule nor the
+# tainted-filename SSRF rule applies to a fixture whose only caller is
+# the test itself.
+packages/neuron/tests/Fixtures/provider-server.php

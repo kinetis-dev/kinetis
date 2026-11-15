@@ -58,7 +58,8 @@ call site chooses the whole URL, which would mean the call site chooses
 who receives the credential. With one, every rule above holds — the
 target is relative, an absolute or scheme-relative URL is refused, a
 scheme downgrade is refused because it would be an absolute URL, and a
-3xx is never followed — so the credential has one reachable destination.
+redirect is followed only to a URL under the base URL — so the
+credential has one reachable destination.
 There is no list of sensitive headers to strip on the way out, because
 nothing this client sends leaves the origin it was configured for.
 
@@ -76,15 +77,55 @@ A transport you inject can carry credentials or a base URI of its own,
 in its default options. Those are invisible here and therefore unpinned;
 see {ref}`http-client-reference-transports`.
 
+(http-client-reference-redirects)=
+
 ### Redirects
 
-Every request is sent with `max_redirects` set to 0, so a 3xx is a
-terminal response: `status()` reports it and `header('Location')` is
-there to read. Following a redirect means deciding, per response,
-whether a new origin may see this client's `Authorization` header, its
-cookies, and its body — including a plain-HTTP origin. That decision
-belongs to the caller who knows what the credential is for, so the
-client makes the redirect visible instead of acting on it.
+The transport is given `max_redirects` 0 on every request, so it never
+follows a redirect itself. Without `withRedirects()` a 3xx is the
+response: `status()` reports it and `header('Location')` is there to
+read.
+
+With `withRedirects($max, $allow)`, this client follows them in its own
+loop, under the same `ResponseBudget` as the request that started the
+chain — one deadline, one byte ceiling, one attempt count that
+`withRetries()` also draws on — and without a pacer slot of its own.
+Each answer is decided in this order, and returned unfollowed at the
+first rule that refuses it:
+
+1. its status is 301, 302, 303, 307 or 308;
+2. for 307 and 308, the method is `GET`, `HEAD`, `OPTIONS`, `TRACE`,
+   `PUT` or `DELETE` and the body is not a stream resource or a
+   `Closure`, since a request that may already have been applied is
+   never sent again;
+3. `Location` is present and resolves, by RFC 3986 §5.2 against the URL
+   just requested, to a URL the rules above accept for a client without
+   a base URL — http(s), no userinfo, printable ASCII, no encoded
+   separator or dot segment once resolved; its fragment is dropped;
+4. it does not go from https to http;
+5. on a client with a base URL, the resolved URL starts with that base
+   URL's prefix — same origin and path prefix — so a credential header
+   never reaches anything outside it;
+6. `$allow`, when given, returns exactly `true` for the resolved URL; an
+   exception it throws releases the redirect answer and propagates;
+7. fewer than `$max` redirects have been followed.
+
+A followed 301, 302 or 303 becomes a `GET` (a `HEAD` stays a `HEAD`)
+with no body and without `Content-Type`, `Content-Length` and
+`Content-Encoding`; a followed 307 or 308 keeps its method, headers and
+body. Neither the `withQuery()` parameters nor a per-call `query` array
+is sent to a later hop: the `Location` URL carries its own query, and a
+key carried in a query parameter never reaches the redirect target. The
+redirect answer is released before the next request is sent.
+
+**Every other header goes with each hop, to whatever origin it names.**
+A client with a base URL follows only under it, so its headers stay on
+its origin. A client without one cannot carry an `Authorization` or
+`Cookie` header, since both require a base URL, and a `CookieJar` sends
+a cookie only to the host that set it; but any other header it was
+given — an API key in a header of the API's own, such as `X-Api-Key` —
+is sent to every origin a redirect leads to. Give a client that sends
+such a header a base URL, or leave its redirects off.
 
 ## Headers
 
@@ -126,9 +167,23 @@ $api->send('GET', '/orders', ['headers' => ['authorization' => 'Bearer new-token
 
 Three names are this client's own and are refused wherever you write
 them: `Host` and `Proxy-Authorization`, for the reasons above, and
-`Accept-Encoding`, because the response-byte ceiling depends on the
-identity encoding this client asks for — see
+`Accept-Encoding`, because this client decodes what it asks for and
+counts the decoded bytes against the ceiling — see
 {ref}`http-client-reference-ceiling`.
+
+### Cookies
+
+A `Cookie` header you write is a credential like `Authorization` and
+requires a base URL. Cookies a `CookieJar` keeps
+({ref}`http-client-cookies`) need none: the jar stores every
+`Set-Cookie` of every response it sees, redirect hops and retried
+answers included, and sends a cookie only to the exact host that set
+it, on a path it matches, over https when it is `Secure`, and until it
+expires. When a request carries both, one `Cookie` header holds the
+caller's values first, joined by `; `, and the jar's after them. A
+client with a jar, like one with retries or redirects, waits for each
+answer's status inside the verb call, since it reads the answer's
+headers there.
 
 ## Query parameters and bodies
 
@@ -282,17 +337,26 @@ bytes. It defaults to `Http::DEFAULT_MAX_RESPONSE_BYTES` — 8 MiB —
 because an upstream you do not control decides how much it sends, and a
 worker that buffers whatever arrives is a worker one reply can exhaust.
 
-**Every request asks for identity encoding**, and `Accept-Encoding` is
-not yours to set. That is what makes the ceiling a bound on memory
-rather than on bytes off the wire: given no `Accept-Encoding` of its
-own, the Amp-backed Symfony transport asks for gzip and inflates the
-body transparently, so a kilobyte of gzip becomes a megabyte held before
-anything can measure it. Asking for identity turns that inflation off,
-and the bytes counted are the bytes kept. A server is free to answer
-with a compressed body anyway — it then arrives, and is bounded, as the
-compressed bytes it is, and `Content-Encoding` is on the response for
-you to read. The cost is plain: this client trades compressed transfers
-for a ceiling that means what it says.
+**Every request asks for `gzip, deflate`, and this client decodes the
+body itself.** `Accept-Encoding` is not yours to set. Given none of its
+own, the Amp-backed Symfony transport would ask for gzip and inflate
+each arriving chunk with no output limit, so a kilobyte of gzip could
+become a megabyte held before anything measured it; sending the header
+here turns that off. `body()` and `chunks()` then share one read loop
+that inflates `gzip` (or `x-gzip`) and `deflate` (zlib-wrapped, as RFC
+9110 defines it) a kibibyte of input at a time, so one step yields about
+a mebibyte at most, and counts every decoded step against the ceiling
+before taking the next. A compressed body is therefore bounded by the
+size it inflates to, held to within one step of the ceiling, and never
+inflated whole first.
+
+No `Content-Encoding`, or `identity`, passes the bytes through. Any
+other encoding — `br`, `zstd`, or a stacked list such as
+`gzip, deflate` — throws with the `Conversion` category when the first
+body byte arrives, as does compressed data that is corrupt, carries
+bytes after its end, or stops before it. An empty body, such as a
+`HEAD` answer's, needs no decoding. `Content-Encoding` and
+`Content-Length` stay on the response as the server sent them.
 
 Within that, the ceiling is checked at each of the three points a body
 can pass it, so no path ends with the whole of an untrusted reply in
@@ -303,9 +367,10 @@ memory:
 - a transfer that passes the ceiling as it arrives is aborted there,
   which is what covers a response declaring no length or declaring one
   it exceeds;
-- what did arrive is measured before it is handed back, so a transport
-  that ignored the first two checks is caught by the one that needs
-  nothing from it.
+- the decoded bytes are counted as they are produced, before they are
+  handed back, so a transport that ignored the first two checks, and a
+  compressed body that inflates past the ceiling, are caught by the one
+  that needs nothing from the transport.
 
 Exactly the ceiling is a body like any other; one byte past it throws
 with the `ResponseTooLarge` category, and the response is released
@@ -369,8 +434,8 @@ response. The {doc}`revolt-http-client` guide shows it in use.
   ({ref}`http-client-reference-failures`). A step waits no longer than
   what is left of the deadline, so a stalled upstream ends in `Timeout`
   at the deadline.
-- **The ceiling.** Pieces are counted as they are handed over, and the
-  piece that would carry the total past the ceiling throws
+- **The ceiling.** Pieces are counted after decoding, as they are handed
+  over, and the piece that would carry the total past the ceiling throws
   `ResponseTooLarge` instead of being yielded. That count is what holds
   the bound: the Amp transport runs its progress hook only when it is
   read, after it has already queued what arrived.

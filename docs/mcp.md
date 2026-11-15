@@ -315,6 +315,8 @@ each code, and "HTTP status codes" its status.
   scope disposal.
 - {doc}`cli` — `mcp:serve` and discovery.
 - {doc}`auth` and {doc}`auth-jwt` — identifying `/mcp` callers.
+- {ref}`neuron-remote-mcp` — a Neuron agent using a server's tools over
+  HTTP.
 - {doc}`middleware` — middleware groups and `CorsMiddleware`.
 - {doc}`routing-validation` — the validation tool arguments share with
   HTTP request bodies.

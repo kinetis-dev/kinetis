@@ -183,7 +183,9 @@ A tool that runs and fails is not in this table.
   `path`, a stable `code`, a `message` and its `parameters` — the
   structure the HTTP renderer puts in its RFC 9457 document, never that
   document itself. Invalid UTF-8 in a violation is substituted rather
-  than failing the encode.
+  than failing the encode. `KinetisMcpApplication::validationFeedback()`
+  builds this text, and `kinetis/neuron` returns the same text to an
+  agent calling a tool in process ({doc}`neuron`).
 - Any other exception, including a tool result that cannot be
   JSON-encoded, becomes the fixed text `Tool execution failed.`.
 

@@ -107,7 +107,7 @@ $response->json();                // the decoded body, as an array
 $response->jsonPath('eta.date');  // one value by dot path, or null
 $response->body();                // the raw string
 $response->header('X-Request-Id');
-$response->attempts();            // wire attempts sent, retries included
+$response->attempts();            // wire attempts sent, retries and redirects included
 ```
 
 An error status is a response, not an exception. Branch on `failed()`,
@@ -125,10 +125,14 @@ if ($response->clientError()) {
 return $response->throw()->json();
 ```
 
-**Redirects are not followed.** A 3xx is returned as the response, with
-its `Location` header to read. To follow one, decide whether the new
-origin should receive the request, then send it with a client
-configured for that origin.
+**Redirects are not followed by default.** A 3xx is returned as the
+response, with its `Location` header to read. {ref}`http-client-redirects`
+turns following on.
+
+A gzip or deflate body arrives decoded, read whole or streamed; the
+`Content-Encoding` and `Content-Length` headers stay as the server sent
+them. A body in another encoding, or one whose compressed data is
+corrupt or cut short, throws with the `Conversion` category.
 
 {ref}`http-client-reference-response` has the JSON decoding rules and
 how to release a response you will not read.
@@ -148,8 +152,9 @@ foreach ($response->chunks() as $bytes) {
 }
 ```
 
-Each piece is raw bytes as the transport delivered them. A piece can end
-mid-line or mid-character; splitting into SSE events or JSON lines is the
+Each piece is the next bytes of the body, decoded from gzip or deflate
+when the response is compressed. A piece can end mid-line or
+mid-character; splitting into SSE events or JSON lines is the
 caller's. The calling Fiber suspends between pieces, so the event loop
 keeps running: timers and other Fibers of the same request, such as work
 started with `concurrently()`, proceed meanwhile. `status()`, `headers()` and `throw()`
@@ -162,8 +167,10 @@ work before and during the stream.
 - **The byte ceiling covers the whole stream.** A `Content-Length` past
   `withMaxResponseBytes()` throws from `chunks()` before anything is
   read, and a stream with no declared length throws `ResponseTooLarge`
-  instead of handing over the piece that would pass the ceiling. Raise
-  the ceiling for a download known to be larger.
+  instead of handing over the piece that would pass the ceiling. The
+  ceiling counts decoded bytes, so a compressed stream is held to the
+  size it inflates to. Raise the ceiling for a download known to be
+  larger.
 - **Stopping early releases the connection.** A `break`, an exception
   thrown in the loop body, or a discarded generator cancels the
   transport response. A generator you keep in a variable holds the
@@ -213,11 +220,89 @@ $http->withToken($token)->get('https://api.carrier.example/v2/shipments');
 $http->withBaseUrl('https://api.carrier.example/v2')->withToken($token)->get('/shipments');
 ```
 
-Such a client refuses an absolute request URL and never follows a
-redirect, so the credential reaches only the base URL's origin. Reach a
-second API with a second client and that API's own credential. Take the
-base URL from configuration, never from request input.
-{ref}`http-client-reference-urls` has the URL, path and header rules.
+Such a client refuses an absolute request URL and follows a redirect
+only to a URL under its base URL, so the credential reaches only the
+base URL's origin. Reach a second API with a second client and that
+API's own credential. Take the base URL from configuration, never from
+request input. {ref}`http-client-reference-urls` has the URL, path and
+header rules.
+
+(http-client-redirects)=
+
+## Follow redirects
+
+`withRedirects()` follows up to `$max` redirects, five unless given:
+
+```{code-block} php
+$download = $http
+    ->withRedirects(3, allow: static fn (string $url): bool => str_starts_with($url, 'https://cdn.example.com/'))
+    ->get('https://files.example.com/reports/2026-11.csv');
+```
+
+- **301, 302 and 303** are followed as a `GET` without the body and
+  without `Content-Type`, `Content-Length` and `Content-Encoding`. A
+  `HEAD` stays a `HEAD`.
+- **307 and 308** repeat the request as it was, and only when its method
+  is `GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT` or `DELETE` and its body is
+  not a stream or a `Closure`. A `POST` answered with 307 is returned,
+  because sending it again could apply it twice.
+- **Never from https to http**, and never outside the base URL of a
+  client that has one: that would take its credentials to another origin.
+  A client without a base URL may follow to any origin, taking every
+  header it carries except `Authorization` and `Cookie`, which it cannot
+  carry; {ref}`http-client-reference-redirects` says when that matters.
+- **`allow`** receives every redirect's absolute target URL before it is
+  requested and must return `true` for it to be followed. Use it to keep
+  a URL taken from user input off internal hosts.
+
+A redirect not followed for any of these reasons, one whose `Location`
+is missing or not a URL this client would send, and the one past the
+limit are returned as the response, so `redirect()` tells you the chain
+stopped. The whole chain runs inside the request's one timeout and byte
+ceiling, each hop is a wire attempt counted by `attempts()` and by
+`withRetries()`, and only the first request waits for a pacer slot.
+
+(http-client-cookies)=
+
+## Keep cookies for a session
+
+A `CookieJar` keeps the cookies a server sets, redirect hops included,
+and sends the matching ones back on every request and every hop:
+
+```{code-block} php
+use Kinetis\RevoltHttpClient\CookieJar;
+
+$session = $this->http->withCookieJar(new CookieJar());
+
+$session->post('https://portal.example.com/login', $credentials)->throw();
+$invoices = $session->get('https://portal.example.com/invoices')->json();
+```
+
+- **One jar per session.** The jar is the cookies of whoever it was built
+  for. Create it where the session starts, inside the request or job that
+  owns it, and never register a jar, or a client carrying one, in the
+  application scope: under a persistent worker every request would send
+  the same user's session. No client has a jar until you give it one.
+- **Exact host only.** A cookie is sent to the host that set it and to no
+  other, whatever its `Domain` attribute names. Telling a domain one
+  owner controls from one shared by strangers needs a public-suffix list;
+  without one, widening a cookie to a parent domain could hand it to
+  another tenant's host, so the jar never widens it.
+- **Path, Secure and expiry** follow RFC 6265: `Path` scopes a cookie to
+  that path and below it, a `Secure` cookie goes only over https and is
+  refused when set over http, `Max-Age` wins over `Expires`, and an
+  expired cookie is deleted. `HttpOnly` and `SameSite` mean nothing
+  outside a browser and are ignored.
+- **Bounded.** A jar keeps at most 50 cookies per host and 300 in all,
+  dropping the oldest to make room, and ignores a cookie longer than
+  4 KiB, so a hostile server cannot grow it without limit.
+
+A `Cookie` header you set yourself still requires a base URL
+({ref}`http-client-reference-urls`). The jar's cookies need none, since
+each is scoped to its own host. When both are present, one `Cookie`
+header carries yours first and the jar's after it; a name in both is
+sent twice, so keep them apart. Cookie values never appear in an
+exception message.
 
 ## Timeouts, response size and retries
 
@@ -233,7 +318,8 @@ $reports = $http
   attempt, every wait between retries, and reading the response. The
   default is 30. Running out throws with the `Timeout` category. Set it
   below the deadline of whatever is waiting on the call.
-- `withMaxResponseBytes()` caps the response body. The default, 8 MiB,
+- `withMaxResponseBytes()` caps the response body, counted after gzip or
+  deflate decoding. The default, 8 MiB,
   keeps one large reply from exhausting worker memory. A larger body
   throws with the `ResponseTooLarge` category; raise the cap for an
   endpoint known to return more.
@@ -307,7 +393,7 @@ exception from a pacer passes through unchanged. Branch on its
 | `Timeout` | The total budget ran out. The server may have received and applied the request. |
 | `ResponseTooLarge` | A response arrived with a body past the byte ceiling. |
 | `ErrorStatus` | `throw()` met a status outside 2xx; `$e->status` holds it. |
-| `Conversion` | `json()` or `jsonPath()` met a body that is not a JSON object or array. |
+| `Conversion` | `json()` or `jsonPath()` met a body that is not a JSON object or array, or a body arrived in a content encoding this client does not decode or with corrupt or truncated gzip or deflate data. |
 | `Discarded` | The response was read after `discard()`. |
 | `Consumed` | The body was read a second way: `body()` or `json()` after `chunks()`, or `chunks()` after `body()`, `json()` or `chunks()`. |
 
@@ -402,3 +488,4 @@ transport must uphold.
 - {doc}`concurrency` — running tasks concurrently.
 - {doc}`telemetry` — a span for every outgoing request.
 - {doc}`aws-sigv4` — signing requests to AWS endpoints.
+- {doc}`neuron` — running Neuron AI providers over this client.

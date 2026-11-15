@@ -10,6 +10,8 @@ use Kinetis\Runtime\RuntimeAdapterInterface;
 use Kinetis\Runtime\SuperglobalsBridge;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Revolt\EventLoop;
+use Throwable;
 
 /**
  * Kinetis's primary optimization target: keeps AppScope warm for the life
@@ -39,7 +41,30 @@ final class FrankenPhpAdapter implements RuntimeAdapterInterface
             $keepRunning = frankenphp_handle_request(function () use ($handler): void {
                 SuperglobalsBridge::handle($handler, $this->trustedProxies);
             });
+
+            self::settleRequest();
         } while ($keepRunning);
+    }
+
+    /**
+     * Runs what the loop already holds for the finished request, such as a
+     * cancelled connection's close, and never waits for an empty loop.
+     */
+    private static function settleRequest(): void
+    {
+        try {
+            $suspension = EventLoop::getSuspension();
+            EventLoop::defer($suspension->resume(...));
+            $suspension->suspend();
+        } catch (Throwable $e) {
+            error_log(sprintf(
+                'Event loop work left by the finished request failed: %s: %s in %s:%d',
+                $e::class,
+                $e->getMessage(),
+                $e->getFile(),
+                $e->getLine(),
+            ));
+        }
     }
 
     #[\Override]

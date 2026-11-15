@@ -962,7 +962,7 @@ jobs:
                 -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
                 -e TRUSTED_PROXIES="$CONFORMANCE_TRUSTED_PROXIES" \
                 dunglas/frankenphp:1.13.5-php8.5.12 \
-                frankenphp php-server --listen :8080 --root "$FIXTURES" --worker "$FIXTURES/index.php"
+                frankenphp php-server --listen :8080 --root "$FIXTURES" --worker "$FIXTURES/index.php,1"
               ;;
             fpm)
               docker run -d --name fpm --network conformance \
@@ -1006,12 +1006,15 @@ jobs:
 
       - name: Run the conformance suite against it
         # KINETIS_CONFORMANCE_CLIENT_IP is the runner container's own
-        # address — what the SAPI reports as REMOTE_ADDR for it.
+        # address — what the SAPI reports as REMOTE_ADDR for it. The
+        # FrankenPHP worker runs one thread, so WorkerRequestBoundaryTest
+        # knows no other request turns its event loop.
         run: |
           docker run --rm --network conformance -v "$PWD":/app -w /app/packages/framework \
             -e KINETIS_CONFORMANCE_HOST=sapi:8080 \
             -e KINETIS_CONFORMANCE_STATE_DIR=/app/.conformance-state \
-            php:8.4.27-cli-alpine sh -c 'export KINETIS_CONFORMANCE_CLIENT_IP=$(hostname -i); php vendor/bin/phpunit --filter RemoteSuperglobalsConformanceTest'
+            -e KINETIS_CONFORMANCE_PERSISTENT=${{ matrix.sapi.name == 'frankenphp' && '1' || '0' }} \
+            php:8.4.27-cli-alpine sh -c 'export KINETIS_CONFORMANCE_CLIENT_IP=$(hostname -i); php vendor/bin/phpunit --filter "RemoteSuperglobalsConformanceTest|WorkerRequestBoundaryTest"'
 
       - name: SAPI logs
         if: failure()
@@ -1163,6 +1166,83 @@ jobs:
         run: |
           docker logs php 2>&1 | tail -100
           docker logs sapi 2>&1 | tail -50 || true
+
+  neuron-browser-disconnect:
+    name: neuron browser disconnect (${{ matrix.sapi }})
+    runs-on: ubuntu-latest
+    # kinetis/neuron's BrowserDisconnectTest: an agent answer streamed by
+    # tests/Fixtures/browser/index.php through a real SAPI, from a
+    # stand-in provider served by `php -S` in its own container, to a
+    # client that leaves after three text frames. The FrankenPHP leg is
+    # the persistent worker, held to one thread; the FPM leg sits behind
+    # nginx. Every container mounts the checkout at /app, so the state
+    # directory is the same path on every side.
+    strategy:
+      fail-fast: false
+      matrix:
+        sapi: [frankenphp, fpm]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install neuron dependencies
+        run: docker run --rm -v "$PWD":/app -w /app/packages/neuron composer:2 install --no-interaction --prefer-dist
+
+      - name: Start the provider and the SAPI serving the fixture
+        # The ini and the nginx template are runtime-conformance's own.
+        run: |
+          docker network create neuron
+          mkdir -p .neuron-state && chmod 777 .neuron-state
+          FIXTURE=/app/packages/neuron/tests/Fixtures/browser
+          CONFORMANCE="$PWD/packages/framework/tests/Runtime/Conformance/Fixtures"
+          docker run -d --name provider --network neuron -v "$PWD":/app -e PHP_CLI_SERVER_WORKERS=4 \
+            php:8.4.27-cli-alpine php -S 0.0.0.0:8090 /app/packages/neuron/tests/Fixtures/provider-server.php
+          PHP_ARGS=(--network neuron -v "$PWD":/app
+            -v "$CONFORMANCE/php-conformance.ini":/usr/local/etc/php/conf.d/zz-conformance.ini:ro
+            -e KINETIS_NEURON_PROVIDER=provider:8090 -e KINETIS_NEURON_STATE_DIR=/app/.neuron-state)
+          case "${{ matrix.sapi }}" in
+            frankenphp)
+              docker run -d --name sapi "${PHP_ARGS[@]}" dunglas/frankenphp:1.13.5-php8.5.12 \
+                frankenphp php-server --listen :8080 --root "$FIXTURE" --worker "$FIXTURE/index.php,1"
+              ;;
+            fpm)
+              docker run -d --name php "${PHP_ARGS[@]}" php:8.4.27-fpm-alpine
+              docker run -d --name sapi --network neuron -v "$PWD":/app:ro \
+                -v "$CONFORMANCE/nginx.conf.template":/etc/nginx/templates/default.conf.template:ro \
+                -e NGINX_PORT=8080 -e FPM_UPSTREAM=php:9000 -e FIXTURE_PATH="$FIXTURE/index.php" \
+                nginx:alpine
+              ;;
+          esac
+
+      - name: Wait for the fixture to answer through the SAPI
+        # The fixture answers 204 to a request without a mark; nginx
+        # answers 502 until PHP-FPM is up.
+        run: |
+          docker run --rm --network neuron php:8.4.27-cli-alpine php -r '
+            $deadline = microtime(true) + 90; $last = "no response";
+            while (microtime(true) < $deadline) {
+              @file_get_contents("http://sapi:8080/", false, stream_context_create(["http" => ["ignore_errors" => true, "timeout" => 2]]));
+              $head = http_get_last_response_headers() ?? [];
+              if (str_contains($head[0] ?? "", " 204")) { exit(0); }
+              $last = $head[0] ?? "no response";
+              usleep(250000);
+            }
+            fwrite(STDERR, "the fixture never answered 204 through the SAPI (last seen: $last)\n");
+            exit(1);
+          '
+
+      - name: Run the disconnect test against it
+        run: |
+          docker run --rm --network neuron -v "$PWD":/app -w /app/packages/neuron \
+            -e KINETIS_NEURON_SAPI=${{ matrix.sapi }} -e KINETIS_NEURON_SAPI_HOST=sapi:8080 \
+            -e KINETIS_NEURON_STATE_DIR=/app/.neuron-state \
+            php:8.4.27-cli-alpine php vendor/bin/phpunit --filter BrowserDisconnectTest
+
+      - name: SAPI logs
+        if: failure()
+        run: |
+          docker logs sapi 2>&1 | tail -100
+          docker logs php 2>&1 | tail -50 || true
+          docker logs provider 2>&1 | tail -50
 
   search-elasticsearch:
     name: search-elasticsearch (Elasticsearch ${{ matrix.elasticsearch }}, PHP ${{ matrix.php-version }})

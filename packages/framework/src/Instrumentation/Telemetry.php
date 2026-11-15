@@ -288,6 +288,20 @@ final class Telemetry implements TelemetryInterface
     }
 
     #[\Override]
+    public function inferenceStarted(string $system, string $model): mixed
+    {
+        return $this->guarded('inferenceStarted', fn (): mixed => $this->backend->inferenceStarted($system, $model));
+    }
+
+    #[\Override]
+    public function inferenceEnded(mixed $token, ?int $inputTokens, ?int $outputTokens, ?Throwable $failure): void
+    {
+        $this->guarded('inferenceEnded', function () use ($token, $inputTokens, $outputTokens, $failure): void {
+            $this->backend->inferenceEnded($token, $inputTokens, $outputTokens, $failure);
+        });
+    }
+
+    #[\Override]
     public function jobPushStarted(string $jobClass, string $queue): mixed
     {
         return $this->guarded('jobPushStarted', fn (): mixed => $this->backend->jobPushStarted($jobClass, $queue));

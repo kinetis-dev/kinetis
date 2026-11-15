@@ -240,6 +240,20 @@ final class RecordingTelemetry implements TelemetryInterface
     }
 
     #[\Override]
+    public function inferenceStarted(string $system, string $model): mixed
+    {
+        $this->calls[] = ['inferenceStarted', [$system, $model]];
+
+        return $this->nextToken++;
+    }
+
+    #[\Override]
+    public function inferenceEnded(mixed $token, ?int $inputTokens, ?int $outputTokens, ?Throwable $failure): void
+    {
+        $this->calls[] = ['inferenceEnded', [$token, $inputTokens, $outputTokens, $failure]];
+    }
+
+    #[\Override]
     public function jobPushStarted(string $jobClass, string $queue): mixed
     {
         $this->calls[] = ['jobPushStarted', [$jobClass, $queue]];

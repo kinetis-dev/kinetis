@@ -295,6 +295,21 @@ path performs — `POST _search`, `GET _doc` — and carries
 `kinetis.search.path_fingerprint`. Index names, aliases and document ids
 do not travel.
 
+(telemetry-inference)=
+
+### Neuron agent inference
+
+An agent passed to `kinetis/neuron`'s `InferenceTelemetry::observe()`
+reports each provider call ({ref}`neuron-trace-inference`). Each becomes a
+client span named `chat {model}`, following OpenTelemetry's GenAI
+conventions: `gen_ai.operation.name` (`chat`), `gen_ai.system`,
+`gen_ai.request.model`, and `gen_ai.usage.input_tokens` and
+`gen_ai.usage.output_tokens` when the provider reported usage. A failed
+call carries an error status and the failure's type. The instructions,
+the messages, the answer and tool arguments do not travel. The span is
+not activated, so a span started while the call runs is its sibling,
+not its child.
+
 ## Log correlation
 
 `TraceAwareLogger` wraps the application's PSR-3 logger and adds the
@@ -331,6 +346,7 @@ turns that off.
 | An incoming request's path or query string | `http.request.method`, and `http.route` on the `route.match` span once the router resolves a template |
 | A search index name, document id or alias | The method and the engine action from fixed vocabularies as the span name, `db.operation.name`, `kinetis.search.path_fingerprint` |
 | A session id, and the session payload | `kinetis.session.id_fingerprint` |
+| A model's instructions, messages, answer and tool arguments | `gen_ai.system`, `gen_ai.request.model`, and the token counts |
 | A failure's message and stack trace | The exception's type — its own class, or an anonymous class's nearest named ancestor — as the span status description and as an `exception` event's `exception.type` |
 
 A fingerprint is a truncated SHA-256 digest: equal inputs group together

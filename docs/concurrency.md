@@ -206,6 +206,9 @@ or class is reported under its real name, and an unqualified `sleep()`
 inside a namespace that declares its own `sleep()` calls that function and
 is not reported.
 
+Neuron AI calls curl inside its own code, where this rule does not look;
+`kinetis/neuron` ships a rule for that ({ref}`neuron-phpstan-rule`).
+
 ### Injecting the HTTP transport
 
 `php-http/discovery` returns the first supported client it finds

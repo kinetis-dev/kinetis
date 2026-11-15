@@ -10,7 +10,7 @@ use Throwable;
 
 /**
  * The framework's instrumentation vocabulary: named moments core (and
- * the persistence, queue and MCP packages) report as they happen, for a
+ * the persistence, queue, MCP and Neuron packages) report as they happen, for a
  * telemetry backend to turn into spans, timings, or nothing at all.
  *
  * Hooks come in started/ended pairs joined by an opaque `mixed` token —
@@ -125,6 +125,20 @@ interface TelemetryInterface
     public function resourceReadStarted(string $uri): mixed;
 
     public function resourceReadEnded(mixed $token): void;
+
+    /**
+     * One call to a generative AI model. $system names the provider in
+     * OpenTelemetry's `gen_ai.system` vocabulary ('openai', 'anthropic',
+     * ...) and $model the model requested. No prompt or completion
+     * content crosses this pair.
+     */
+    public function inferenceStarted(string $system, string $model): mixed;
+
+    /**
+     * $inputTokens and $outputTokens are null when the provider reported
+     * no usage.
+     */
+    public function inferenceEnded(mixed $token, ?int $inputTokens, ?int $outputTokens, ?Throwable $failure): void;
 
     public function jobPushStarted(string $jobClass, string $queue): mixed;
 

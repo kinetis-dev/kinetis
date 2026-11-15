@@ -211,6 +211,62 @@ final class OtelTelemetryTest extends TracingTestCase
         self::assertSame('0000000000000000', $this->span()->getParentSpanId());
     }
 
+    public function test_an_inference_is_one_client_span_with_the_gen_ai_attributes_and_nothing_else(): void
+    {
+        $request = $this->telemetry->requestStarted(new ServerRequest('POST', 'https://app.test/ask'));
+        $token = $this->telemetry->inferenceStarted('openai', 'gpt-4o-mini');
+        $this->telemetry->inferenceEnded($token, 12, 7, null);
+        $this->telemetry->requestEnded($request, new Response(200));
+
+        [$inference, $server] = $this->spans();
+        self::assertSame('chat gpt-4o-mini', $inference->getName());
+        self::assertSame(SpanKind::KIND_CLIENT, $inference->getKind());
+        self::assertSame($server->getSpanId(), $inference->getParentSpanId());
+        self::assertSame([
+            'gen_ai.operation.name' => 'chat',
+            'gen_ai.system' => 'openai',
+            'gen_ai.request.model' => 'gpt-4o-mini',
+            'gen_ai.usage.input_tokens' => 12,
+            'gen_ai.usage.output_tokens' => 7,
+        ], $inference->getAttributes()->toArray());
+        self::assertSame([], $inference->getEvents());
+        self::assertSame(StatusCode::STATUS_UNSET, $inference->getStatus()->getCode());
+    }
+
+    public function test_an_inference_without_reported_usage_carries_no_token_counts(): void
+    {
+        $this->telemetry->inferenceEnded($this->telemetry->inferenceStarted('anthropic', 'claude'), null, null, null);
+
+        $attributes = $this->span()->getAttributes();
+        self::assertFalse($attributes->has('gen_ai.usage.input_tokens'));
+        self::assertFalse($attributes->has('gen_ai.usage.output_tokens'));
+    }
+
+    public function test_an_inference_is_never_the_parent_of_what_starts_while_it_runs(): void
+    {
+        $token = $this->telemetry->inferenceStarted('openai', 'gpt-4o-mini');
+        $this->telemetry->toolCallEnded($this->telemetry->toolCallStarted('find_orders'), null);
+        $this->telemetry->inferenceEnded($token, null, null, null);
+
+        [$tool, $inference] = $this->spans();
+        self::assertNotSame($inference->getSpanId(), $tool->getParentSpanId());
+    }
+
+    public function test_a_failed_inference_marks_its_span_as_an_error_without_the_message(): void
+    {
+        $token = $this->telemetry->inferenceStarted('openai', 'gpt-4o-mini');
+        $this->telemetry->inferenceEnded($token, null, null, new RuntimeException('the prompt leaked here'));
+
+        $span = $this->span();
+        self::assertSame(StatusCode::STATUS_ERROR, $span->getStatus()->getCode());
+        self::assertSame(RuntimeException::class, $span->getStatus()->getDescription());
+        self::assertStringNotContainsString('the prompt leaked here', json_encode([
+            $span->getAttributes()->toArray(),
+            array_map(static fn ($event): array => [$event->getName(), $event->getAttributes()->toArray()], $span->getEvents()),
+            $span->getStatus()->getDescription(),
+        ], JSON_THROW_ON_ERROR));
+    }
+
     public function test_task_hooks_nest_under_the_batch_token_they_are_handed(): void
     {
         $batch = $this->telemetry->taskBatchStarted(2);

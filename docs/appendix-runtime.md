@@ -270,12 +270,20 @@ TLS-only, so the scheme is `https` and a forwarded header cannot move it.
 An event claiming `http` describes an invocation the platform cannot have
 delivered, and is refused as malformed rather than honored or ignored.
 
+(runtime-reference-frankenphp-fpm)=
 ## FrankenPHP and PHP-FPM
 
 `FrankenPhpAdapter` loops on `frankenphp_handle_request()` and lets an
 uncaught exception propagate, which ends the worker. `FpmAdapter` serves
 one request per script run. Both build their request through
 `SuperglobalsBridge`.
+
+When a request ends, the FrankenPHP worker runs the work the event loop
+already holds before it takes the next request, so a cancelled upstream
+connection, whose close the HTTP transport queues on the loop, closes at
+the request boundary. It is one turn of the loop that never waits for
+the loop to become empty; a failure in it is written to the SAPI error
+log, and the worker goes on to the next request.
 
 A streamed response's failing emitter is the one throwable the bridge
 contains. By then the status, the headers and some number of body bytes
@@ -456,7 +464,9 @@ Gateway exposes only a `502`.
 `Spiral\RoadRunner\Http\PSR7Worker` over `Spiral\RoadRunner\Worker::create()`
 and loops `waitRequest()`/`respond()`. It folds a repeated header into
 one comma-joined value first, since `PSR7Worker` presents repeats as
-separate array values.
+separate array values. After each reply it runs the event-loop work the
+request left behind, as {ref}`runtime-reference-frankenphp-fpm` describes
+for FrankenPHP.
 
 ### `http.raw_body` detection
 

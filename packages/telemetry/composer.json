@@ -32,6 +32,7 @@
     "suggest": {
         "kinetis/database-bridge": "Query and transaction spans for the SQL clients it builds, reported through the framework's instrumentation hooks.",
         "kinetis/queue": "Producer and consumer job spans, reported by the queue backends and the worker through the framework's instrumentation hooks.",
+        "kinetis/neuron": "Inference spans for Neuron AI agents — provider, model and token usage per provider call — reported through the framework's instrumentation hooks.",
         "kinetis/cache-redis": "Enables the TracingSimpleCache decorator — a span per cache operation.",
         "kinetis/session": "Enables the TracingSessionStore decorator — a span per session read, create, update and destroy.",
         "kinetis/search": "Gives TracingSearchTransport the transportDecorator seam each engine factory exposes — a span per search call, on OpenSearch or Elasticsearch."
