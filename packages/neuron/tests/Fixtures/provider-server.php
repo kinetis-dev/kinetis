@@ -20,6 +20,9 @@ declare(strict_types=1);
  * answers with what arrived. `/v1/slow/{ms}` answers after {ms}.
  * `/record?mark=` answers with a fixed body. With `?mark=`, every
  * endpoint appends its method and path to the mark file.
+ * `/collections/kinetis-neuron-{12 hex}` answers as a Qdrant collection
+ * that does not exist yet and holds one point, and appends each method
+ * and path to the file of the collection's name in the temp directory.
  */
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -163,6 +166,23 @@ if ($path === '/v1/echo') {
 if (preg_match('#^/v1/slow/(\d+)$#', $path, $matches) === 1) {
     usleep((int) $matches[1] * 1000);
     echo 'done';
+
+    return;
+}
+
+if (preg_match('#^/collections/(kinetis-neuron-[0-9a-f]{12})(/.*)?$#', $path, $matches) === 1) {
+    file_put_contents(sys_get_temp_dir() . "/{$matches[1]}", "{$_SERVER['REQUEST_METHOD']} {$path}\n", FILE_APPEND);
+    header('Content-Type: application/json');
+    echo json_encode(['result' => match ($matches[2] ?? '') {
+        '/exists' => ['exists' => false],
+        '/points/query' => ['points' => [[
+            'id' => 1,
+            'score' => 0.9,
+            'vector' => [0.1, 0.2],
+            'payload' => ['content' => 'stored text', 'sourceType' => 'string', 'sourceName' => 'manual'],
+        ]]],
+        default => true,
+    }]);
 
     return;
 }

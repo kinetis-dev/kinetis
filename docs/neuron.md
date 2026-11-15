@@ -16,6 +16,8 @@ suspends the calling Fiber, so timers and other tasks in the same
 request keep running while it waits. Each call has one deadline and one
 byte ceiling, and requests can reach only the provider's origin.
 
+(neuron-register-client)=
+
 ## Register the client
 
 Build one `NeuronHttpClient` per provider origin at boot, and keep it
@@ -461,6 +463,63 @@ are the application's own service credentials, which every request may
 use. When the token or the session belongs to a user or to a request,
 build the connector in the request.
 
+(neuron-vector-stores)=
+
+## Retrieve from a vector store
+
+`ChromaVectorStore`, `MeilisearchVectorStore`, `PineconeVectorStore`,
+`QdrantVectorStore` and `WeaviateVectorStore` send every request through
+the `HttpClientInterface` they are given, and so do Neuron's embeddings
+providers. Without one, Neuron builds `CurlHttpClient`. Give each a
+`NeuronHttpClient` whose base URL is the server's origin:
+
+```{code-block} php
+use Kinetis\Neuron\NeuronHttpClient;
+use Kinetis\RevoltHttpClient\Http;
+use NeuronAI\RAG\Embeddings\OpenAIEmbeddingsProvider;
+use NeuronAI\RAG\VectorStore\QdrantVectorStore;
+
+$qdrant = new NeuronHttpClient(new Http()->withTimeout(10), 'http://qdrant:6333');
+
+$store = new QdrantVectorStore(
+    'http://qdrant:6333/collections/articles',
+    dimension: 1536,
+    httpClient: $qdrant,
+);
+$embeddings = new OpenAIEmbeddingsProvider(
+    key: $apiKey,
+    model: 'text-embedding-3-small',
+    dimensions: 1536,
+    httpClient: $openAi,
+);
+```
+
+`$qdrant` and `$openAi` are built once at boot and shared, as in
+{ref}`neuron-register-client`. Build the stores
+and the embeddings providers in the request, like the provider.
+
+- **The base URL is the server's origin, not the collection.** A store
+  builds its URLs from the one it is given, and some requests go to that
+  URL itself: Qdrant creates and deletes a collection at the collection
+  URL, Chroma creates one at its collections URL. `NeuronHttpClient`
+  refuses its own base URL as a request URL, so a client pinned at the
+  collection fails those requests with `InvalidRequest` before anything
+  is sent.
+- **An embeddings provider** takes the base URI it sends to, as a chat
+  provider does: `https://api.openai.com/v1` for
+  `OpenAIEmbeddingsProvider`, so the client the OpenAI chat provider
+  uses serves it too.
+- **`MemoryVectorStore`** keeps its documents in the object. Build it
+  in the request; registered in the application scope it would carry
+  one request's documents into the next and grow without bound.
+- **`ElasticsearchVectorStore` and `OpenSearchVectorStore`** take the
+  vendor's SDK client and send through it, so they are safe only when
+  that client is built over a non-blocking transport.
+
+`FileVectorStore`, `MariaDBVectorStore`, `MongoDBVectorStore`,
+`TypesenseVectorStore`, `FileDataLoader`, `PdfReader` and
+`Neo4jGraphStore` block the worker ({ref}`neuron-not-in-worker`).
+
 (neuron-trace-inference)=
 
 ## Trace inference
@@ -535,6 +594,8 @@ user info:
 
 `$e->request` is Neuron's `HttpRequest`, headers included, so it holds
 the API key: never log that property.
+
+(neuron-not-in-worker)=
 
 ## What not to use in a worker
 

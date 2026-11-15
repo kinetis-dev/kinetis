@@ -93,6 +93,18 @@ $connector = new McpConnector(
 $agent->addTool($connector->tools());
 ```
 
+Neuron's HTTP vector stores (Chroma, Meilisearch, Pinecone, Qdrant,
+Weaviate) and its embeddings providers take the same client. Pin it at
+the vector database's origin, not at the collection
+([guide](https://kinetis.dev/docs/neuron.html#neuron-vector-stores)):
+
+```php
+$store = new QdrantVectorStore(
+    'http://qdrant:6333/collections/articles',
+    httpClient: new NeuronHttpClient(new Http(), 'http://qdrant:6333'),
+);
+```
+
 `Kinetis\Neuron\Linting\NoWorkerUnsafeNeuronRule` is a PHPStan rule that
 reports the Neuron features unsafe in a persistent worker: a provider,
 tool, connector, vector store or embeddings provider built without an
