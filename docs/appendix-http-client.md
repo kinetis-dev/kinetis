@@ -77,6 +77,8 @@ A transport you inject can carry credentials or a base URI of its own,
 in its default options. Those are invisible here and therefore unpinned;
 see {ref}`http-client-reference-transports`.
 
+(http-client-reference-redirects)=
+
 ### Redirects
 
 The transport is given `max_redirects` 0 on every request, so it never
@@ -111,10 +113,19 @@ first rule that refuses it:
 A followed 301, 302 or 303 becomes a `GET` (a `HEAD` stays a `HEAD`)
 with no body and without `Content-Type`, `Content-Length` and
 `Content-Encoding`; a followed 307 or 308 keeps its method, headers and
-body. Every other configured header goes with the next hop, and a
-per-call `query` array belongs to the first request only — the
-`Location` URL carries its own. The redirect answer is released before
-the next request is sent.
+body. Neither the `withQuery()` parameters nor a per-call `query` array
+is sent to a later hop: the `Location` URL carries its own query, and a
+key carried in a query parameter never reaches the redirect target. The
+redirect answer is released before the next request is sent.
+
+**Every other header goes with each hop, to whatever origin it names.**
+A client with a base URL follows only under it, so its headers stay on
+its origin. A client without one cannot carry an `Authorization` or
+`Cookie` header, since both require a base URL, and a `CookieJar` sends
+a cookie only to the host that set it; but any other header it was
+given — an API key in a header of the API's own, such as `X-Api-Key` —
+is sent to every origin a redirect leads to. Give a client that sends
+such a header a base URL, or leave its redirects off.
 
 ## Headers
 

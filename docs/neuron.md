@@ -72,7 +72,9 @@ as the provider writes it: `https://api.openai.com/v1` for Neuron's
 the `baseUri` you pass to `OpenAILike`. It becomes the `Http` base URL.
 A provider request under it goes out relative to it. Any other absolute
 URI is refused with the `InvalidRequest` category before anything is
-sent, and redirects are never followed. The provider adds its key to
+sent. The client turns no redirect following on; an `Http` you built
+with `withRedirects()` follows one only to a URL under that base URL.
+The provider adds its key to
 every request in its own header (`Authorization` for OpenAI, `x-api-key`
 for Anthropic), and the key can reach only that origin. To reach a
 second provider, build a second client.

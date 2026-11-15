@@ -463,9 +463,11 @@ final class HttpResponse
     }
 
     /**
-     * Runs a decoding step, eagerly when it is a generator, so a corrupt
-     * slice fails before the output behind it is counted. A decoding
-     * failure becomes the `Conversion` failure its fixed text names.
+     * Runs a decoding step and maps its failure to the `Conversion`
+     * failure its fixed text names. A step that returns a value runs here;
+     * one that returns a generator is wrapped by {@see slices()} and runs
+     * only as the caller pulls from it, one slice at a time, which is what
+     * lets the caller count each slice before the next is decoded.
      *
      * @template T
      * @param Closure(): T $step

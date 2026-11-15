@@ -36,7 +36,7 @@ final class CookieJar
     /** Cookies kept in all; setting another evicts the oldest. */
     private const int MAX_COOKIES = 300;
 
-    /** A cookie whose name and value together are longer is ignored. */
+    /** A cookie whose name, value and stored path together are longer is ignored. */
     private const int MAX_COOKIE_BYTES = 4096;
 
     /** RFC 9110 token: what a cookie name may contain. */
@@ -135,7 +135,6 @@ final class CookieJar
         if (
             preg_match(self::TOKEN, $name) !== 1
             || preg_match(self::ILLEGAL_IN_VALUE, $value) === 1
-            || strlen($name) + strlen($value) > self::MAX_COOKIE_BYTES
         ) {
             return;
         }
@@ -165,6 +164,10 @@ final class CookieJar
         }
 
         $path ??= self::defaultPath($target['path']);
+
+        if (strlen($name) + strlen($value) + strlen($path) > self::MAX_COOKIE_BYTES) {
+            return;
+        }
         $key = "{$target['host']}\0{$path}\0{$name}";
 
         // Over http a cookie cannot replace one only https could set.

@@ -143,6 +143,17 @@ final class CookieJarTest extends TestCase
         self::assertStringNotContainsString('huge', $sent);
     }
 
+    /** The size bound counts what the jar keeps, the path a cookie is stored under included. */
+    public function test_a_cookie_whose_path_carries_it_past_the_size_limit_is_ignored(): void
+    {
+        $jar = new CookieJar();
+        $long = '/' . str_repeat('a', 60000);
+        $this->set($jar, 'https://api.example.com/', 's=1; Path=' . $long, 'kept=1; Path=/' . str_repeat('b', 100));
+
+        self::assertNull($this->sent($jar, 'https://api.example.com' . $long));
+        self::assertSame('kept=1', $this->sent($jar, 'https://api.example.com/' . str_repeat('b', 100)));
+    }
+
     /** A malformed line is ignored rather than stored or sent. */
     public function test_a_malformed_set_cookie_is_ignored(): void
     {

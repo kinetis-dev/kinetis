@@ -248,8 +248,9 @@ $download = $http
   because sending it again could apply it twice.
 - **Never from https to http**, and never outside the base URL of a
   client that has one: that would take its credentials to another origin.
-  A client without a base URL may follow to any origin, as it carries no
-  credential header.
+  A client without a base URL may follow to any origin, taking every
+  header it carries except `Authorization` and `Cookie`, which it cannot
+  carry; {ref}`http-client-reference-redirects` says when that matters.
 - **`allow`** receives every redirect's absolute target URL before it is
   requested and must return `true` for it to be followed. Use it to keep
   a URL taken from user input off internal hosts.
