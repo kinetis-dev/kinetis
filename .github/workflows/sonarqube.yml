@@ -38,6 +38,9 @@ env:
 jobs:
   sonarqube:
     name: SonarQube Cloud scan
+    # Dependabot runs receive no repository secrets, so the scan has no
+    # SONAR_TOKEN and cannot authenticate.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     # The databases exist for one reason: persistence's env-gated
     # tests/Integration suite must run *under pcov here* so the native
