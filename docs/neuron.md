@@ -16,6 +16,8 @@ suspends the calling Fiber, so timers and other tasks in the same
 request keep running while it waits. Each call has one deadline and one
 byte ceiling, and requests can reach only the provider's origin.
 
+(neuron-register-client)=
+
 ## Register the client
 
 Build one `NeuronHttpClient` per provider origin at boot, and keep it
@@ -91,6 +93,8 @@ The `Http` you pass sets the rest:
   and structured-output calls are `POST` requests, so it never repeats
   one, and this package adds no retry of its own.
 
+(neuron-scope-request)=
+
 ## Scope providers and agents to the request
 
 `NeuronHttpClient` is immutable and holds no request data, so one
@@ -103,6 +107,7 @@ providers and agents do hold request data:
 | The provider (`OpenAI`, `Anthropic`, ...) | Request | Every agent run sets the system prompt and the tool list on the provider it uses. A shared provider carries one request's instructions and tools into the next. |
 | The `Agent` | Request | It holds the chat history, the thread ID and any pending tool call. |
 | `McpTools` and the tools it returns | Request | They run each call with the request scope they were built in ({ref}`neuron-mcp-tools`). |
+| `BedrockProvider` | Request | Like the other providers, it holds the system prompt, the tools and a stream's state; the `SigV4SigningClient` under it is application-scoped ({ref}`neuron-bedrock`). |
 
 Build both inside the request:
 
@@ -461,6 +466,126 @@ are the application's own service credentials, which every request may
 use. When the token or the session belongs to a user or to a request,
 build the connector in the request.
 
+(neuron-vector-stores)=
+
+## Retrieve from a vector store
+
+`ChromaVectorStore`, `MeilisearchVectorStore`, `PineconeVectorStore`,
+`QdrantVectorStore` and `WeaviateVectorStore` send every request through
+the `HttpClientInterface` they are given, and so does every Neuron
+embeddings provider except `AwsBedrockEmbeddingsProvider`. Without one,
+Neuron builds `CurlHttpClient`. Give each a `NeuronHttpClient` whose
+base URL is the server's origin:
+
+```{code-block} php
+use Kinetis\Neuron\NeuronHttpClient;
+use Kinetis\RevoltHttpClient\Http;
+use NeuronAI\RAG\Embeddings\OpenAIEmbeddingsProvider;
+use NeuronAI\RAG\VectorStore\QdrantVectorStore;
+
+$qdrant = new NeuronHttpClient(new Http()->withTimeout(10), 'http://qdrant:6333');
+
+$store = new QdrantVectorStore(
+    'http://qdrant:6333/collections/articles',
+    dimension: 1536,
+    httpClient: $qdrant,
+);
+$embeddings = new OpenAIEmbeddingsProvider(
+    key: $apiKey,
+    model: 'text-embedding-3-small',
+    dimensions: 1536,
+    httpClient: $openAi,
+);
+```
+
+`$qdrant` and `$openAi` are built once at boot and shared, as in
+{ref}`neuron-register-client`. Build the stores
+and the embeddings providers in the request, like the provider.
+
+- **The base URL is the server's origin, not the collection.** A store
+  builds its URLs from the one it is given, and some requests go to that
+  URL itself: Qdrant creates and deletes a collection at the collection
+  URL, Chroma creates one at its collections URL. `NeuronHttpClient`
+  refuses its own base URL as a request URL, so a client pinned at the
+  collection fails those requests with `InvalidRequest` before anything
+  is sent.
+- **An embeddings provider** takes the base URI it sends to, as a chat
+  provider does: `https://api.openai.com/v1` for
+  `OpenAIEmbeddingsProvider`, so the client the OpenAI chat provider
+  uses serves it too.
+- **`AwsBedrockEmbeddingsProvider`** takes aws-sdk-php's
+  `BedrockRuntimeClient` and has no `HttpClientInterface` parameter. It
+  sends through the AWS SDK, which blocks the worker. Use
+  `Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider` instead
+  ({ref}`neuron-bedrock`).
+- **`MemoryVectorStore`** keeps its documents in the object. Build it
+  in the request; registered in the application scope it would carry
+  one request's documents into the next and grow without bound.
+
+`FileVectorStore`, `MariaDBVectorStore`, `MongoDBVectorStore`,
+`TypesenseVectorStore`, `FileDataLoader`, `PdfReader` and
+`Neo4jGraphStore` block the worker ({ref}`neuron-not-in-worker`).
+
+### Elasticsearch and OpenSearch
+
+`ElasticsearchVectorStore` and `OpenSearchVectorStore` take the vendor's
+SDK client and send every request through it. Give them the client
+{doc}`search-elasticsearch` or {doc}`search-opensearch` builds:
+`ElasticsearchClientFactory::fromConfig()` and
+`OpenSearchClientFactory::fromConfig()` put the SDK on the non-blocking
+search transport, and with `SEARCH_ELASTICSEARCH_HOST` or
+`SEARCH_OPENSEARCH_HOST` set, the package binds that client in the
+container. Inject it into a class the container builds for the request,
+and build the store there:
+
+```{code-block} php
+namespace App\Knowledge;
+
+use Elastic\Elasticsearch\Client;
+use NeuronAI\RAG\Document;
+use NeuronAI\RAG\VectorStore\ElasticsearchVectorStore;
+use NeuronAI\RAG\VectorStore\SearchRequest;
+
+final readonly class ArticleSearch
+{
+    public function __construct(private Client $elasticsearch) {}
+
+    /**
+     * @param list<float> $embedding
+     * @return iterable<Document>
+     */
+    public function nearest(array $embedding): iterable
+    {
+        $store = new ElasticsearchVectorStore($this->elasticsearch, 'articles', topK: 5);
+
+        return $store->search(new SearchRequest($embedding));
+    }
+}
+```
+
+For OpenSearch, inject `OpenSearch\Client` and build
+`new OpenSearchVectorStore($client, 'articles', topK: 5)` the same way.
+
+- **Scope.** `ArticleSearch` is not registered, so the container builds
+  it, and the store, for each request. Each resolution of the
+  Elasticsearch client is a new client over the shared transport,
+  because the SDK keeps the last request and response it sent
+  ({ref}`why-the-client-is-short-lived`); do not keep it, or a store
+  holding it, in a worker-lifetime service. The OpenSearch client is one
+  instance shared by the worker; build its store in the request like
+  every other store.
+- **Other clients block.** A client built with the SDK's own
+  `ClientBuilder`, `SymfonyClientFactory` or `GuzzleClientFactory`
+  sends through a blocking HTTP client. For a second connection, build
+  the client with the factory and a connection name
+  ({ref}`search-reference-named`).
+- **Deadlines and failures** are the search transport's: the package's
+  `..._TIMEOUT` and `..._MAX_RESPONSE_BYTES` bound each call, and
+  nothing is sent twice. The store raises the SDK's exceptions
+  ({ref}`search-reference-failures`), and `VectorStoreException` for
+  documents the bulk request rejected. A failed `addDocuments()` may
+  already have indexed some of the documents.
+
 (neuron-trace-inference)=
 
 ## Trace inference
@@ -495,15 +620,17 @@ carrying the provider, the model and the token usage
   `observe()` adds no tool span.
 - **Provider names.** Neuron's provider classes map to OpenTelemetry's
   `gen_ai.system` names: `OpenAI` to `openai`, `Anthropic` to
-  `anthropic`, `Gemini` to `gcp.gemini`, and so on. A subclass such as
+  `anthropic`, `Gemini` to `gcp.gemini`, `BedrockProvider` to
+  `aws.bedrock`, and so on. A subclass such as
   `OpenAILike` can reach any service and reports `_OTHER`.
 
 (neuron-call-fails)=
 
 ## When a call fails
 
-Every failure is a `NeuronAI\Exceptions\HttpException`, the exception
-Neuron's providers expect:
+Every failure of a call through `NeuronHttpClient` is a
+`NeuronAI\Exceptions\HttpException`, the exception Neuron's providers
+expect. The Bedrock providers fail differently ({ref}`neuron-bedrock`).
 
 - **A status of 400 or more** raises `HttpException::statusError()`.
   `$e->response` holds the status and the body, read under the byte
@@ -536,6 +663,138 @@ user info:
 `$e->request` is Neuron's `HttpRequest`, headers included, so it holds
 the API key: never log that property.
 
+(neuron-vertex)=
+
+## Vertex AI providers
+
+`GeminiVertex` and `AnthropicVertex` send their model calls through the
+`NeuronHttpClient` they are given, but authenticate with a Google
+service-account token that does not go through it. Neuron gets the token
+from `google/auth`'s `ServiceAccountCredentials::fetchAuthToken()` and
+passes it no HTTP handler, so `google/auth` posts to
+`https://oauth2.googleapis.com/token` through a Guzzle client of its own.
+That request blocks the worker and its whole event loop until Google
+answers. Guzzle's default client sets no overall timeout, so only its
+connect timeout and the network bound the stall.
+
+The provider keeps the token it fetched and fetches a new one when the
+token is within 60 seconds of expiring; Google issues it for an hour.
+The provider is built for each request
+({ref}`neuron-scope-request`), so the first Vertex call of every request
+makes one blocking token request, and later calls in the same request
+reuse the token. Neuron builds the credentials inside the provider and
+has no option to route the token request through another client.
+`Gemini`, which authenticates with an API key, makes no token request.
+
+Neuron does not require `google/auth`; install it to use these
+providers.
+
+(neuron-bedrock)=
+
+## Amazon Bedrock
+
+Neuron's `BedrockRuntime` provider and `AwsBedrockEmbeddingsProvider`
+send through aws-sdk-php, which blocks the worker. Use
+`Kinetis\Neuron\Bedrock\BedrockProvider` and
+`Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider` instead. They call
+Bedrock Runtime's Converse, ConverseStream and InvokeModel APIs through a
+`Kinetis\AwsSigV4\SigV4SigningClient` ({doc}`aws-sigv4`), so a call
+suspends the calling Fiber like any other provider call. aws-sdk-php is
+not needed.
+
+Build the signing client once at boot, for the region's Bedrock Runtime
+endpoint and the `bedrock` signing service:
+
+```{code-block} php
+:caption: bootstrap.php
+
+use App\Assistant\BedrockProviders;
+use Kinetis\AwsSigV4\SignedTransport;
+use Kinetis\AwsSigV4\SigV4SigningClient;
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+
+return static function (AppScope $app, Config $config): void {
+    $region = $config->required('AWS_REGION');
+
+    $app->instance(BedrockProviders::class, new BedrockProviders(new SigV4SigningClient(
+        origin: "https://bedrock-runtime.{$region}.amazonaws.com",
+        region: $region,
+        service: 'bedrock',
+        transport: SignedTransport::create(['timeout' => 120, 'max_duration' => 120]),
+    )));
+};
+```
+
+```{code-block} php
+namespace App\Assistant;
+
+use Kinetis\AwsSigV4\SigV4SigningClient;
+use Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider;
+use Kinetis\Neuron\Bedrock\BedrockProvider;
+
+final readonly class BedrockProviders
+{
+    public function __construct(private SigV4SigningClient $bedrock) {}
+
+    public function claude(): BedrockProvider
+    {
+        return new BedrockProvider($this->bedrock, 'anthropic.claude-3-haiku-20240307-v1:0', ['maxTokens' => 1024]);
+    }
+
+    public function embeddings(): BedrockEmbeddingsProvider
+    {
+        return new BedrockEmbeddingsProvider($this->bedrock);
+    }
+}
+```
+
+Inject `BedrockProviders` where `SupportAssistant` injects `Providers`,
+and pass `claude()` to `setAiProvider()` ({ref}`neuron-scope-request`).
+
+- **Scope.** The signing client holds resolved credentials and reuses its
+  connections, and keeps no request state, so one instance serves the
+  worker. `BedrockProvider` holds the system prompt, the tools and a
+  stream's state: build it in the request, like Neuron's providers.
+- **Credentials** come from the signing client's default chain
+  ({doc}`aws-sigv4`, "Credentials"). The role needs
+  `bedrock:InvokeModel`, and `bedrock:InvokeModelWithResponseStream` to
+  stream.
+- **The deadline is the transport's.** `SignedTransport::create()`
+  bounds a request at 30 seconds idle and 30 in total, short for a model
+  answer; the example allows 120 for both.
+- **The byte ceiling** is the providers' last argument: 8 MiB for
+  `BedrockProvider`, 1 MiB for `BedrockEmbeddingsProvider`. Every
+  response byte counts, a streamed answer's included. Past it the call
+  throws and the connection is closed.
+- **The model** is a model ID or an inference profile ID or ARN. It is
+  sent in the request path to the signing client's origin; the provider
+  never chooses a host.
+- **What is sent** is what Neuron's `BedrockRuntime` sends: Neuron's own
+  Bedrock message and tool mappers, the last four cache points,
+  structured output as the schema appended to the system prompt for that
+  call, and `inferenceConfig` as given. `BedrockEmbeddingsProvider` sends
+  the Titan text embeddings body, `inputText`.
+- **Nothing is sent twice.** A call is one signed request, with no retry
+  in the provider, the signing client or its transport.
+
+Every failure is a `NeuronAI\Exceptions\ProviderException`:
+
+- **A status outside 2xx** names the status and Bedrock's error
+  `message`, read under the byte ceiling.
+- **A signing-client failure** keeps the `Kinetis\AwsSigV4\Exception`
+  behind it as `$e->getPrevious()`. After a `NetworkFailureException`,
+  Bedrock may have run and billed the request
+  ({doc}`aws-sigv4`, "When a request fails").
+- **A stream** that carries an exception or error event names its type
+  and message. A frame that fails its checksum, a stream cut inside a
+  frame, and a stream that ends before Bedrock's `messageStop` each fail
+  with a fixed message.
+
+No message holds the request or a credential.
+
+(neuron-not-in-worker)=
+
 ## What not to use in a worker
 
 These Neuron features block the worker, fork it, or keep state between
@@ -547,7 +806,19 @@ requests:
 | `AmpHttpClient` | `withBaseUri()` and `withHeaders()` change the instance they are called on, and it reads a body with no size limit. A shared instance carries one request's settings into the next. |
 | `Agent::parallelToolCalls()` (`ParallelToolNode`) | It forks the worker process to run tools. |
 | `FilePersistence`, `DatabasePersistence`, `FileMessageStore`, `SQLMessageStore` | Blocking file and PDO I/O. |
-| `PhpSerializer` | It calls `unserialize()` with no class restriction. |
+| `RedisPersistence`, `EloquentPersistence`, `EloquentMessageStore` | Blocking phpredis and Eloquent database I/O. |
+| `PhpSerializer`, `IgbinarySerializer` | They unserialize workflow records with no class restriction. |
+| `MySQLToolkit`, `PGSQLToolkit` and their tools | Blocking PDO queries. |
+| `FileSystemToolkit` and its tools | Blocking file I/O; `BashTool` waits on a child process. |
+| `SESTool` from the AWS toolkit | The AWS SDK client sends synchronously. |
+| `BedrockRuntime`, `AwsBedrockEmbeddingsProvider` | The AWS SDK client sends synchronously. Use `BedrockProvider` and `BedrockEmbeddingsProvider` ({ref}`neuron-bedrock`). |
+| `FileDataLoader`, `PdfReader` | Blocking file reads; `PdfReader` waits on a `pdftotext` child process. |
+| `FileVectorStore`, `MariaDBVectorStore`, `MongoDBVectorStore` | Blocking file, PDO and MongoDB driver I/O. |
+| `TypesenseVectorStore` | It sends through the Typesense SDK client, for which Kinetis has no non-blocking transport. |
+| `Neo4jGraphStore` | The Bolt driver blocks on its socket. |
+| `FileEvaluationCache` from Neuron's evaluation tools | Blocking file I/O. |
+| `GeminiVertex`, `AnthropicVertex` | Each request's first call fetches a service-account token with a blocking request ({ref}`neuron-vertex`). |
+| `OpenAISpeechToText`, `ElevenLabsSpeechToText` | They upload the audio as a multipart body, which `NeuronHttpClient` refuses ({ref}`neuron-call-fails`). |
 | A workflow interrupt and resume | A resumed node runs again from its start and repeats whatever it did before the interrupt that was not memoized. |
 | `StdioTransport` for MCP, an `McpConnector` configured with `command` | `proc_open()` and blocking pipe reads. |
 | `SseHttpTransport` for MCP, an `McpConnector` configured with `async: true` | `fopen()` on the server URL blocks. |
@@ -578,22 +849,33 @@ It reports:
 - `new X(...)` and `X::make(...)` when X's constructor takes a nullable
   `NeuronAI\HttpClient\HttpClientInterface` and the call leaves it out or
   passes a literal `null`, which is how Neuron falls back to
-  `CurlHttpClient`. Every provider, toolkit tool and `McpConnector` built
-  without a `NeuronHttpClient` is reported this way.
+  `CurlHttpClient`. Every provider, toolkit tool, `McpConnector`, HTTP
+  vector store and embeddings provider built without a `NeuronHttpClient`
+  is reported this way.
 - `new CurlHttpClient` and `new AmpHttpClient`.
 - `parallelToolCalls()` on an `Agent`, unless its argument is a literal
   `false`.
-- `new` of `FilePersistence`, `DatabasePersistence`, `FileMessageStore`,
-  `SQLMessageStore` and `PhpSerializer`.
+- `new` of `FilePersistence`, `DatabasePersistence`, `RedisPersistence`,
+  `EloquentPersistence`, `FileMessageStore`, `SQLMessageStore`,
+  `EloquentMessageStore`, `PhpSerializer` and `IgbinarySerializer`.
+- `new` and `make()` of the MySQL, PGSQL, file-system and AWS toolkits
+  and of each of their tools.
+- `new BedrockRuntime` and `new AwsBedrockEmbeddingsProvider`.
+- `new FileDataLoader`, `FileDataLoader::for()`, `new PdfReader`,
+  `new Neo4jGraphStore`, `new FileEvaluationCache`, and `new` of
+  `FileVectorStore`, `MariaDBVectorStore` and `MongoDBVectorStore`.
 - `new StdioTransport`, `new SseHttpTransport`, and an `McpConnector`
   whose configuration is an array literal with a `command` key or with
   `async` set to `true`.
 - `UsageMeter::watch()` and `new UsageMeter`.
 
 It does not report a workflow interrupt and resume, streaming under
-RoadRunner, an `McpConnector` configuration that is not an array literal,
-a call whose class name is an expression or whose arguments are spread,
-or an object built outside the analysed code, such as by a library.
+RoadRunner, `TypesenseVectorStore`, an Elasticsearch or OpenSearch store given a client built outside the
+Kinetis factories, a speech-to-text provider given a
+`NeuronHttpClient`, an `McpConnector` configuration that is not an array
+literal, a call whose class name is an expression or whose arguments are
+spread, or an object built outside the analysed code, such as by a
+library.
 
 ## See also
 

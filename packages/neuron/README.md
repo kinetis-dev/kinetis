@@ -93,11 +93,49 @@ $connector = new McpConnector(
 $agent->addTool($connector->tools());
 ```
 
+Neuron's HTTP vector stores (Chroma, Meilisearch, Pinecone, Qdrant,
+Weaviate) and its embeddings providers, except AWS Bedrock's, take the
+same client. Pin it at the vector database's origin, not at the collection
+([guide](https://kinetis.dev/docs/neuron.html#neuron-vector-stores)):
+
+```php
+$store = new QdrantVectorStore(
+    'http://qdrant:6333/collections/articles',
+    httpClient: new NeuronHttpClient(new Http(), 'http://qdrant:6333'),
+);
+```
+
+Neuron's Amazon Bedrock classes send through aws-sdk-php, which blocks.
+`Kinetis\Neuron\Bedrock\BedrockProvider` and `BedrockEmbeddingsProvider`
+call Bedrock's Converse, ConverseStream and InvokeModel APIs through
+[`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4)'s
+`SigV4SigningClient` instead, with every response byte under one ceiling
+([guide](https://kinetis.dev/docs/neuron.html#neuron-bedrock)):
+
+```php
+use Kinetis\AwsSigV4\SignedTransport;
+use Kinetis\AwsSigV4\SigV4SigningClient;
+use Kinetis\Neuron\Bedrock\BedrockProvider;
+
+$bedrock = new SigV4SigningClient(
+    origin: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+    region: 'us-east-1',
+    service: 'bedrock',
+    transport: SignedTransport::create(['timeout' => 120, 'max_duration' => 120]),
+);
+
+$provider = new BedrockProvider($bedrock, 'anthropic.claude-3-haiku-20240307-v1:0');
+```
+
 `Kinetis\Neuron\Linting\NoWorkerUnsafeNeuronRule` is a PHPStan rule that
 reports the Neuron features unsafe in a persistent worker: a provider,
-tool or connector built without an HTTP client, Neuron's own clients,
-parallel tool calls, the file and PDO stores, the stdio and SSE MCP
-transports, and `UsageMeter` ([guide](https://kinetis.dev/docs/neuron.html#neuron-phpstan-rule)):
+tool, connector, vector store or embeddings provider built without an
+HTTP client, Neuron's own clients, parallel tool calls, the file,
+database and Redis stores, the unrestricted workflow serializers, the
+database, file-system and AWS toolkits, the AWS SDK Bedrock provider and
+embeddings provider, the file, database and graph RAG components, the
+stdio and SSE MCP transports, and `UsageMeter`
+([guide](https://kinetis.dev/docs/neuron.html#neuron-phpstan-rule)):
 
 ```yaml
 rules:
@@ -111,7 +149,8 @@ composer require kinetis/neuron
 ```
 
 Requires PHP 8.4+, [`neuron-core/neuron-ai`](https://github.com/neuron-core/neuron-ai),
-[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client)
+[`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client),
+[`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4)
 and [`kinetis/mcp`](https://github.com/kinetis-dev/mcp).
 Full documentation, including request scoping, streaming, failure
 mapping and the Neuron features to avoid in a persistent worker:

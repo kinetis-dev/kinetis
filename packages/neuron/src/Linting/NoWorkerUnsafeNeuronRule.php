@@ -27,18 +27,20 @@ use PHPStan\Type\TypeCombinator;
  * Flags the Neuron AI features that block a persistent worker, fork it, or
  * keep state between its requests: a provider, tool or MCP connector built
  * without an HTTP client (Neuron then builds its blocking CurlHttpClient),
- * Neuron's own HTTP clients, parallel tool calls, the file and PDO stores,
- * PhpSerializer, the stdio and SSE MCP transports, and UsageMeter. The
- * reasons and the limitations are documented in
- * {@link https://kinetis.dev/docs/neuron.html}, "What not to use in a
- * worker".
+ * Neuron's own HTTP clients, parallel tool calls, the file, database and
+ * Redis stores, the unrestricted serializers, the database, file-system and
+ * AWS toolkits, Neuron's AWS SDK Bedrock provider and embeddings provider,
+ * the file, database and graph RAG components, the stdio and SSE MCP
+ * transports, and UsageMeter. The reasons and the limitations are
+ * documented in {@link https://kinetis.dev/docs/neuron.html}, "What not to
+ * use in a worker".
  *
  * A missing client is read from the constructor's signature, so every class
  * with a nullable `NeuronAI\HttpClient\HttpClientInterface` parameter is
- * covered, and `X::make()` of a class using `NeuronAI\StaticConstructor` is
- * judged as `new X`. Names resolve through PHPStan's scope and reflection. A
- * call whose class or method name is an expression, or whose arguments are
- * spread, is not reported.
+ * covered. `X::make()` of a class using `NeuronAI\StaticConstructor`, and
+ * `X::for()` of a Neuron data loader, are judged as `new X`. Names resolve
+ * through PHPStan's scope and reflection. A call whose class or method name
+ * is an expression, or whose arguments are spread, is not reported.
  *
  * Ships under the main autoload and is loaded only by a PHPStan run, for the
  * reasons `Kinetis\Linting\NoStaticPropertiesRule` gives: an application's
@@ -63,13 +65,23 @@ final class NoWorkerUnsafeNeuronRule implements Rule
     private const string FORK = '%s makes the agent fork the worker process to run its tool calls. '
         . 'Leave parallel tool calls off in a persistent worker.';
 
-    private const string STORAGE = '%s does blocking file or PDO I/O that stops the worker and its whole event '
-        . 'loop. Keep the chat history and workflow state in Neuron\'s in-memory defaults, InMemoryMessageStore '
-        . 'and InMemoryPersistence, which end with the request.';
+    private const string STORAGE = '%s does blocking file, database or Redis I/O that stops the worker and its '
+        . 'whole event loop. Keep the chat history and workflow state in Neuron\'s in-memory defaults, '
+        . 'InMemoryMessageStore and InMemoryPersistence, which end with the request.';
 
     private const string SERIALIZER = '%s unserializes workflow records with no class restriction, so whoever can '
         . 'write the workflow store can run code in the worker. Keep workflow state in Neuron\'s default '
         . 'InMemoryPersistence, which ends with the request.';
+
+    private const string BLOCKING = '%s does blocking file, database, process or network I/O that stops the worker '
+        . 'and its whole event loop, and Neuron has no non-blocking form of it. Leave it out of a persistent worker.';
+
+    private const string BEDROCK = '%s sends through the AWS SDK, whose calls block the worker and its whole event '
+        . 'loop. Use Kinetis\Neuron\Bedrock\BedrockProvider over a Kinetis\AwsSigV4\SigV4SigningClient.';
+
+    private const string BEDROCK_EMBEDDINGS = '%s sends through the AWS SDK, whose calls block the worker and its '
+        . 'whole event loop. Use Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider over a '
+        . 'Kinetis\AwsSigV4\SigV4SigningClient.';
 
     private const string MCP = '%s blocks the worker and its whole event loop: the stdio transport waits on a '
         . 'child process and the SSE transport opens its stream with fopen(). Give McpConnector a url, which '
@@ -83,6 +95,8 @@ final class NoWorkerUnsafeNeuronRule implements Rule
 
     private const string STATIC_CONSTRUCTOR = 'NeuronAI\StaticConstructor';
 
+    private const string DATA_LOADER = 'NeuronAI\RAG\DataLoader\AbstractDataLoader';
+
     private const string AGENT = 'NeuronAI\Agent\Agent';
 
     private const string MCP_CONNECTOR = 'neuronai\mcp\mcpconnector';
@@ -95,9 +109,40 @@ final class NoWorkerUnsafeNeuronRule implements Rule
         'neuronai\httpclient\amp\amphttpclient' => self::AMP,
         'neuronai\workflow\persistence\filepersistence' => self::STORAGE,
         'neuronai\workflow\persistence\databasepersistence' => self::STORAGE,
+        'neuronai\workflow\persistence\redispersistence' => self::STORAGE,
+        'neuronai\workflow\persistence\eloquentpersistence' => self::STORAGE,
         'neuronai\chat\history\filemessagestore' => self::STORAGE,
         'neuronai\chat\history\sqlmessagestore' => self::STORAGE,
+        'neuronai\chat\history\eloquentmessagestore' => self::STORAGE,
         'neuronai\workflow\persistence\phpserializer' => self::SERIALIZER,
+        'neuronai\workflow\persistence\igbinaryserializer' => self::SERIALIZER,
+        'neuronai\tools\toolkits\mysql\mysqltoolkit' => self::BLOCKING,
+        'neuronai\tools\toolkits\mysql\mysqlschematool' => self::BLOCKING,
+        'neuronai\tools\toolkits\mysql\mysqlselecttool' => self::BLOCKING,
+        'neuronai\tools\toolkits\mysql\mysqlwritetool' => self::BLOCKING,
+        'neuronai\tools\toolkits\pgsql\pgsqltoolkit' => self::BLOCKING,
+        'neuronai\tools\toolkits\pgsql\pgsqlschematool' => self::BLOCKING,
+        'neuronai\tools\toolkits\pgsql\pgsqlselecttool' => self::BLOCKING,
+        'neuronai\tools\toolkits\pgsql\pgsqlwritetool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\filesystemtoolkit' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\bashtool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\deletefiletool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\editfiletool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\globpathtool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\grepfilecontenttool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\parsefiletool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\readfiletool' => self::BLOCKING,
+        'neuronai\tools\toolkits\filesystem\writefiletool' => self::BLOCKING,
+        'neuronai\tools\toolkits\aws\sestool' => self::BLOCKING,
+        'neuronai\providers\aws\bedrockruntime' => self::BEDROCK,
+        'neuronai\rag\embeddings\awsbedrockembeddingsprovider' => self::BEDROCK_EMBEDDINGS,
+        'neuronai\rag\dataloader\filedataloader' => self::BLOCKING,
+        'neuronai\rag\dataloader\pdfreader' => self::BLOCKING,
+        'neuronai\rag\graphstore\neo4jgraphstore' => self::BLOCKING,
+        'neuronai\rag\vectorstore\filevectorstore' => self::BLOCKING,
+        'neuronai\rag\vectorstore\mariadbvectorstore' => self::BLOCKING,
+        'neuronai\rag\vectorstore\mongodbvectorstore' => self::BLOCKING,
+        'neuronai\evaluation\cache\fileevaluationcache' => self::BLOCKING,
         'neuronai\mcp\stdiotransport' => self::MCP,
         'neuronai\mcp\ssehttptransport' => self::MCP,
         self::USAGE_METER => self::USAGE,
@@ -157,15 +202,16 @@ final class NoWorkerUnsafeNeuronRule implements Rule
             return \sprintf(self::USAGE, $class . '::watch()');
         }
 
-        if ($method !== 'make' || !$this->reflectionProvider->hasClass($class)) {
+        if (($method !== 'make' && $method !== 'for') || !$this->reflectionProvider->hasClass($class)) {
             return null;
         }
 
         $reflection = $this->reflectionProvider->getClass($class);
+        $constructs = $method === 'make'
+            ? \array_key_exists(self::STATIC_CONSTRUCTOR, $reflection->getTraits(true))
+            : $reflection->isSubclassOf(self::DATA_LOADER);
 
-        return \array_key_exists(self::STATIC_CONSTRUCTOR, $reflection->getTraits(true))
-            ? $this->construction($reflection->getName(), $node, '%s::make()')
-            : null;
+        return $constructs ? $this->construction($reflection->getName(), $node, "%s::{$method}()") : null;
     }
 
     /**

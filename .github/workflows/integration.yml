@@ -1324,6 +1324,13 @@ jobs:
           SEARCH_ELASTICSEARCH_HOST: http://127.0.0.1:9200
           SEARCH_ELASTICSEARCH_PLAINTEXT: "true"
 
+      - name: Run neuron-ai vector store checks
+        working-directory: packages/search-elasticsearch
+        run: php tests-integration/neuron-vector-store.php
+        env:
+          SEARCH_ELASTICSEARCH_HOST: http://127.0.0.1:9200
+          SEARCH_ELASTICSEARCH_PLAINTEXT: "true"
+
       - name: Run auth integration checks
         working-directory: packages/search-elasticsearch
         run: php tests-integration/elasticsearch-auth.php
@@ -1381,6 +1388,13 @@ jobs:
       - name: Run integration checks
         working-directory: packages/search-opensearch
         run: php tests-integration/opensearch.php
+        env:
+          SEARCH_OPENSEARCH_HOST: http://127.0.0.1:9200
+          SEARCH_OPENSEARCH_PLAINTEXT: "true"
+
+      - name: Run neuron-ai vector store checks
+        working-directory: packages/search-opensearch
+        run: php tests-integration/neuron-vector-store.php
         env:
           SEARCH_OPENSEARCH_HOST: http://127.0.0.1:9200
           SEARCH_OPENSEARCH_PLAINTEXT: "true"

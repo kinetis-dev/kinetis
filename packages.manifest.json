@@ -548,7 +548,7 @@
             "description": "Fiber-native non-blocking OpenSearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchOpenSearch\\",
             "testNamespace": "Kinetis\\SearchOpenSearch\\Tests\\",
-            "version": "1.2.8",
+            "version": "1.2.9",
             "requires": [
                 "framework",
                 "search"
@@ -556,6 +556,9 @@
             "requiresDev": [
                 "revolt-http-client"
             ],
+            "requireDevExtra": {
+                "neuron-core/neuron-ai": "^4.1.24"
+            },
             "require": {
                 "opensearch-project/opensearch-php": "^2.6.0",
                 "psr/http-client": "^1.0.3"
@@ -569,7 +572,7 @@
             "description": "Fiber-native non-blocking Elasticsearch client construction for Kinetis, on kinetis/search's Revolt-backed HTTP transport.",
             "namespace": "Kinetis\\SearchElasticsearch\\",
             "testNamespace": "Kinetis\\SearchElasticsearch\\Tests\\",
-            "version": "1.0.7",
+            "version": "1.0.8",
             "requires": [
                 "framework",
                 "search"
@@ -577,6 +580,9 @@
             "requiresDev": [
                 "revolt-http-client"
             ],
+            "requireDevExtra": {
+                "neuron-core/neuron-ai": "^4.1.24"
+            },
             "require": {
                 "elastic/transport": "^8.11 || ^9.0",
                 "elasticsearch/elasticsearch": "^8.19 || ^9.0",
@@ -612,11 +618,12 @@
         },
         "neuron": {
             "name": "kinetis/neuron",
-            "description": "Runs Neuron AI providers over kinetis/revolt-http-client: a non-blocking, origin-pinned, deadline- and byte-bounded HttpClientInterface for neuron-core/neuron-ai, safe to share across requests in a persistent worker, and the application's own #[McpTool] tools as Neuron tools, called in process in the current request's scope.",
+            "description": "Runs Neuron AI providers over kinetis/revolt-http-client: a non-blocking, origin-pinned, deadline- and byte-bounded HttpClientInterface for neuron-core/neuron-ai, safe to share across requests in a persistent worker, an Amazon Bedrock chat and embeddings provider over kinetis/aws-sigv4, and the application's own #[McpTool] tools as Neuron tools, called in process in the current request's scope.",
             "namespace": "Kinetis\\Neuron\\",
             "testNamespace": "Kinetis\\Neuron\\Tests\\",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "requires": [
+                "aws-sigv4",
                 "framework",
                 "mcp",
                 "mcp-protocol",
@@ -626,7 +633,10 @@
                 "nikic/php-parser": "^5.8.0"
             },
             "require": {
-                "neuron-core/neuron-ai": "^4.1.24"
+                "neuron-core/neuron-ai": "^4.1.24",
+                "nyholm/psr7": "^1.8.2",
+                "psr/http-client": "^1.0.3",
+                "psr/http-message": "^2.0"
             },
             "kinetis": []
         },

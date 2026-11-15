@@ -6,6 +6,7 @@ namespace Kinetis\Neuron;
 
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Instrumentation\TelemetryInterface;
+use Kinetis\Neuron\Bedrock\BedrockProvider;
 use NeuronAI\Agent\Agent;
 use NeuronAI\Agent\Observability\InferenceStart;
 use NeuronAI\Agent\Observability\InferenceStop;
@@ -146,7 +147,7 @@ final class InferenceTelemetry
             Anthropic::class => 'anthropic',
             AnthropicVertex::class, GeminiVertex::class => 'gcp.vertex_ai',
             Gemini::class => 'gcp.gemini',
-            BedrockRuntime::class => 'aws.bedrock',
+            BedrockRuntime::class, BedrockProvider::class => 'aws.bedrock',
             Cohere::class => 'cohere',
             Deepseek::class => 'deepseek',
             Mistral::class => 'mistral_ai',

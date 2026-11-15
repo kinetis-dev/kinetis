@@ -9,9 +9,11 @@ use Kinetis\Instrumentation\NullTelemetry;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Instrumentation\TelemetryInterface;
 use Kinetis\Mcp\McpRegistry;
+use Kinetis\Neuron\Bedrock\BedrockProvider;
 use Kinetis\Neuron\InferenceTelemetry;
 use Kinetis\Neuron\McpTools;
 use Kinetis\Neuron\NeuronHttpClient;
+use Kinetis\Neuron\Tests\Fixtures\Bedrock\RecordingBedrock;
 use Kinetis\Neuron\Tests\Fixtures\SuspendingProvider;
 use Kinetis\Neuron\Tests\Fixtures\Tools\Caller;
 use Kinetis\Neuron\Tests\Fixtures\Tools\SupportToolController;
@@ -157,6 +159,21 @@ final class InferenceTelemetryTest extends TestCase
         self::assertInstanceOf(HttpException::class, $failure);
         self::assertSame(['inferenceStarted', ['openai', 'gpt-4o-mini', 1]], $this->calls[0]);
         self::assertCount(2, $this->calls);
+    }
+
+    public function test_the_kinetis_bedrock_provider_is_named_aws_bedrock(): void
+    {
+        $bedrock = new RecordingBedrock(RecordingBedrock::json(['message' => 'Throttled'], 429));
+
+        $failure = self::failure(static function () use ($bedrock): void {
+            InferenceTelemetry::observe(Agent::make())
+                ->setAiProvider(new BedrockProvider($bedrock->client(), 'amazon.nova-lite-v1:0'))
+                ->setThreadId('thread-1')
+                ->chat(new UserMessage('ping'));
+        });
+
+        self::assertInstanceOf(ProviderException::class, $failure);
+        self::assertSame(['inferenceStarted', ['aws.bedrock', 'amazon.nova-lite-v1:0', 1]], $this->calls[0]);
     }
 
     public function test_a_stream_its_reader_stops_still_ends_its_pair(): void
