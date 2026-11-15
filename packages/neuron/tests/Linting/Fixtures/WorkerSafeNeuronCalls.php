@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Kinetis\Neuron\Tests\Linting\Fixtures;
 
+use Kinetis\AwsSigV4\SigV4SigningClient;
+use Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider;
+use Kinetis\Neuron\Bedrock\BedrockProvider;
 use Kinetis\Neuron\NeuronHttpClient;
 use Kinetis\RevoltHttpClient\Http;
 use NeuronAI\Agent\Agent;
@@ -40,5 +43,11 @@ final class WorkerSafeNeuronCalls
         new OpenAIEmbeddingsProvider('key', 'model', 1024, $client);
         new MemoryVectorStore();
         StringDataLoader::for('text');
+    }
+
+    public function bedrock(SigV4SigningClient $bedrock): void
+    {
+        new BedrockProvider($bedrock, 'anthropic.claude-3-haiku-20240307-v1:0');
+        new BedrockEmbeddingsProvider($bedrock);
     }
 }

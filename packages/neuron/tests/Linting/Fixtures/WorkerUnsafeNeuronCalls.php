@@ -137,4 +137,10 @@ final class WorkerUnsafeNeuronCalls
         UsageMeter::watch($agent);
         new UsageMeter();
     }
+
+    public function awsSdkBedrock(mixed $bedrockRuntimeClient): void
+    {
+        new \NeuronAI\Providers\AWS\BedrockRuntime($bedrockRuntimeClient, 'anthropic.claude-3-haiku-20240307-v1:0');
+        new \NeuronAI\RAG\Embeddings\AwsBedrockEmbeddingsProvider($bedrockRuntimeClient);
+    }
 }

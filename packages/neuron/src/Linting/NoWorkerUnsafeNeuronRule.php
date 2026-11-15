@@ -29,8 +29,9 @@ use PHPStan\Type\TypeCombinator;
  * without an HTTP client (Neuron then builds its blocking CurlHttpClient),
  * Neuron's own HTTP clients, parallel tool calls, the file, database and
  * Redis stores, the unrestricted serializers, the database, file-system and
- * AWS toolkits, the file, database and graph RAG components, the stdio and
- * SSE MCP transports, and UsageMeter. The reasons and the limitations are
+ * AWS toolkits, Neuron's AWS SDK Bedrock provider and embeddings provider,
+ * the file, database and graph RAG components, the stdio and SSE MCP
+ * transports, and UsageMeter. The reasons and the limitations are
  * documented in {@link https://kinetis.dev/docs/neuron.html}, "What not to
  * use in a worker".
  *
@@ -74,6 +75,13 @@ final class NoWorkerUnsafeNeuronRule implements Rule
 
     private const string BLOCKING = '%s does blocking file, database, process or network I/O that stops the worker '
         . 'and its whole event loop, and Neuron has no non-blocking form of it. Leave it out of a persistent worker.';
+
+    private const string BEDROCK = '%s sends through the AWS SDK, whose calls block the worker and its whole event '
+        . 'loop. Use Kinetis\Neuron\Bedrock\BedrockProvider over a Kinetis\AwsSigV4\SigV4SigningClient.';
+
+    private const string BEDROCK_EMBEDDINGS = '%s sends through the AWS SDK, whose calls block the worker and its '
+        . 'whole event loop. Use Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider over a '
+        . 'Kinetis\AwsSigV4\SigV4SigningClient.';
 
     private const string MCP = '%s blocks the worker and its whole event loop: the stdio transport waits on a '
         . 'child process and the SSE transport opens its stream with fopen(). Give McpConnector a url, which '
@@ -126,6 +134,8 @@ final class NoWorkerUnsafeNeuronRule implements Rule
         'neuronai\tools\toolkits\filesystem\readfiletool' => self::BLOCKING,
         'neuronai\tools\toolkits\filesystem\writefiletool' => self::BLOCKING,
         'neuronai\tools\toolkits\aws\sestool' => self::BLOCKING,
+        'neuronai\providers\aws\bedrockruntime' => self::BEDROCK,
+        'neuronai\rag\embeddings\awsbedrockembeddingsprovider' => self::BEDROCK_EMBEDDINGS,
         'neuronai\rag\dataloader\filedataloader' => self::BLOCKING,
         'neuronai\rag\dataloader\pdfreader' => self::BLOCKING,
         'neuronai\rag\graphstore\neo4jgraphstore' => self::BLOCKING,

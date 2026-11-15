@@ -43,6 +43,13 @@ final class NoWorkerUnsafeNeuronRuleTest extends RuleTestCase
     private const string BLOCKING = '%s does blocking file, database, process or network I/O that stops the worker '
         . 'and its whole event loop, and Neuron has no non-blocking form of it. Leave it out of a persistent worker.';
 
+    private const string BEDROCK = '%s sends through the AWS SDK, whose calls block the worker and its whole event '
+        . 'loop. Use Kinetis\Neuron\Bedrock\BedrockProvider over a Kinetis\AwsSigV4\SigV4SigningClient.';
+
+    private const string BEDROCK_EMBEDDINGS = '%s sends through the AWS SDK, whose calls block the worker and its '
+        . 'whole event loop. Use Kinetis\Neuron\Bedrock\BedrockEmbeddingsProvider over a '
+        . 'Kinetis\AwsSigV4\SigV4SigningClient.';
+
     private const string MCP = '%s blocks the worker and its whole event loop: the stdio transport waits on a '
         . 'child process and the SSE transport opens its stream with fopen(). Give McpConnector a url, which '
         . 'uses Streamable HTTP, and a Kinetis\Neuron\NeuronHttpClient.';
@@ -112,6 +119,8 @@ final class NoWorkerUnsafeNeuronRuleTest extends RuleTestCase
             [sprintf(self::MCP, 'NeuronAI\MCP\McpConnector::make()'), 132],
             [sprintf(self::USAGE, 'NeuronAI\Evaluation\Usage\UsageMeter::watch()'), 137],
             [sprintf(self::USAGE, 'new NeuronAI\Evaluation\Usage\UsageMeter'), 138],
+            [sprintf(self::BEDROCK, 'new NeuronAI\Providers\AWS\BedrockRuntime'), 143],
+            [sprintf(self::BEDROCK_EMBEDDINGS, 'new NeuronAI\RAG\Embeddings\AwsBedrockEmbeddingsProvider'), 144],
         ]);
     }
 
