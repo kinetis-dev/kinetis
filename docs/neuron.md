@@ -93,6 +93,8 @@ The `Http` you pass sets the rest:
   and structured-output calls are `POST` requests, so it never repeats
   one, and this package adds no retry of its own.
 
+(neuron-scope-request)=
+
 ## Scope providers and agents to the request
 
 `NeuronHttpClient` is immutable and holds no request data, so one
@@ -595,6 +597,32 @@ user info:
 `$e->request` is Neuron's `HttpRequest`, headers included, so it holds
 the API key: never log that property.
 
+(neuron-vertex)=
+
+## Vertex AI providers
+
+`GeminiVertex` and `AnthropicVertex` send their model calls through the
+`NeuronHttpClient` they are given, but authenticate with a Google
+service-account token that does not go through it. Neuron gets the token
+from `google/auth`'s `ServiceAccountCredentials::fetchAuthToken()` and
+passes it no HTTP handler, so `google/auth` posts to
+`https://oauth2.googleapis.com/token` through a Guzzle client of its own.
+That request blocks the worker and its whole event loop until Google
+answers. Guzzle's default client sets no overall timeout, so only its
+connect timeout and the network bound the stall.
+
+The provider keeps the token it fetched and fetches a new one when the
+token is within 60 seconds of expiring; Google issues it for an hour.
+The provider is built for each request
+({ref}`neuron-scope-request`), so the first Vertex call of every request
+makes one blocking token request, and later calls in the same request
+reuse the token. Neuron builds the credentials inside the provider and
+has no option to route the token request through another client.
+`Gemini`, which authenticates with an API key, makes no token request.
+
+Neuron does not require `google/auth`; install it to use these
+providers.
+
 (neuron-not-in-worker)=
 
 ## What not to use in a worker
@@ -618,6 +646,7 @@ requests:
 | `TypesenseVectorStore` | It sends through the Typesense SDK client, for which Kinetis has no non-blocking transport. |
 | `Neo4jGraphStore` | The Bolt driver blocks on its socket. |
 | `FileEvaluationCache` from Neuron's evaluation tools | Blocking file I/O. |
+| `GeminiVertex`, `AnthropicVertex` | Each request's first call fetches a service-account token with a blocking request ({ref}`neuron-vertex`). |
 | `OpenAISpeechToText`, `ElevenLabsSpeechToText` | They upload the audio as a multipart body, which `NeuronHttpClient` refuses ({ref}`neuron-call-fails`). |
 | A workflow interrupt and resume | A resumed node runs again from its start and repeats whatever it did before the interrupt that was not memoized. |
 | `StdioTransport` for MCP, an `McpConnector` configured with `command` | `proc_open()` and blocking pipe reads. |
