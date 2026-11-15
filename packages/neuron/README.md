@@ -94,8 +94,8 @@ $agent->addTool($connector->tools());
 ```
 
 Neuron's HTTP vector stores (Chroma, Meilisearch, Pinecone, Qdrant,
-Weaviate) and its embeddings providers take the same client. Pin it at
-the vector database's origin, not at the collection
+Weaviate) and its embeddings providers, except AWS Bedrock's, take the
+same client. Pin it at the vector database's origin, not at the collection
 ([guide](https://kinetis.dev/docs/neuron.html#neuron-vector-stores)):
 
 ```php

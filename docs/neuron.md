@@ -471,9 +471,10 @@ build the connector in the request.
 
 `ChromaVectorStore`, `MeilisearchVectorStore`, `PineconeVectorStore`,
 `QdrantVectorStore` and `WeaviateVectorStore` send every request through
-the `HttpClientInterface` they are given, and so do Neuron's embeddings
-providers. Without one, Neuron builds `CurlHttpClient`. Give each a
-`NeuronHttpClient` whose base URL is the server's origin:
+the `HttpClientInterface` they are given, and so does every Neuron
+embeddings provider except `AwsBedrockEmbeddingsProvider`. Without one,
+Neuron builds `CurlHttpClient`. Give each a `NeuronHttpClient` whose
+base URL is the server's origin:
 
 ```{code-block} php
 use Kinetis\Neuron\NeuronHttpClient;
@@ -511,16 +512,77 @@ and the embeddings providers in the request, like the provider.
   provider does: `https://api.openai.com/v1` for
   `OpenAIEmbeddingsProvider`, so the client the OpenAI chat provider
   uses serves it too.
+- **`AwsBedrockEmbeddingsProvider`** takes aws-sdk-php's
+  `BedrockRuntimeClient` and has no `HttpClientInterface` parameter. It
+  sends through the AWS SDK, which blocks the worker
+  ({ref}`neuron-not-in-worker`).
 - **`MemoryVectorStore`** keeps its documents in the object. Build it
   in the request; registered in the application scope it would carry
   one request's documents into the next and grow without bound.
-- **`ElasticsearchVectorStore` and `OpenSearchVectorStore`** take the
-  vendor's SDK client and send through it, so they are safe only when
-  that client is built over a non-blocking transport.
 
 `FileVectorStore`, `MariaDBVectorStore`, `MongoDBVectorStore`,
 `TypesenseVectorStore`, `FileDataLoader`, `PdfReader` and
 `Neo4jGraphStore` block the worker ({ref}`neuron-not-in-worker`).
+
+### Elasticsearch and OpenSearch
+
+`ElasticsearchVectorStore` and `OpenSearchVectorStore` take the vendor's
+SDK client and send every request through it. Give them the client
+{doc}`search-elasticsearch` or {doc}`search-opensearch` builds:
+`ElasticsearchClientFactory::fromConfig()` and
+`OpenSearchClientFactory::fromConfig()` put the SDK on the non-blocking
+search transport, and with `SEARCH_ELASTICSEARCH_HOST` or
+`SEARCH_OPENSEARCH_HOST` set, the package binds that client in the
+container. Inject it into a class the container builds for the request,
+and build the store there:
+
+```{code-block} php
+namespace App\Knowledge;
+
+use Elastic\Elasticsearch\Client;
+use NeuronAI\RAG\Document;
+use NeuronAI\RAG\VectorStore\ElasticsearchVectorStore;
+use NeuronAI\RAG\VectorStore\SearchRequest;
+
+final readonly class ArticleSearch
+{
+    public function __construct(private Client $elasticsearch) {}
+
+    /**
+     * @param list<float> $embedding
+     * @return iterable<Document>
+     */
+    public function nearest(array $embedding): iterable
+    {
+        $store = new ElasticsearchVectorStore($this->elasticsearch, 'articles', topK: 5);
+
+        return $store->search(new SearchRequest($embedding));
+    }
+}
+```
+
+For OpenSearch, inject `OpenSearch\Client` and build
+`new OpenSearchVectorStore($client, 'articles', topK: 5)` the same way.
+
+- **Scope.** `ArticleSearch` is not registered, so the container builds
+  it, and the store, for each request. Each resolution of the
+  Elasticsearch client is a new client over the shared transport,
+  because the SDK keeps the last request and response it sent
+  ({ref}`why-the-client-is-short-lived`); do not keep it, or a store
+  holding it, in a worker-lifetime service. The OpenSearch client is one
+  instance shared by the worker; build its store in the request like
+  every other store.
+- **Other clients block.** A client built with the SDK's own
+  `ClientBuilder`, `SymfonyClientFactory` or `GuzzleClientFactory`
+  sends through a blocking HTTP client. For a second connection, build
+  the client with the factory and a connection name
+  ({ref}`search-reference-named`).
+- **Deadlines and failures** are the search transport's: the package's
+  `..._TIMEOUT` and `..._MAX_RESPONSE_BYTES` bound each call, and
+  nothing is sent twice. The store raises the SDK's exceptions
+  ({ref}`search-reference-failures`), and `VectorStoreException` for
+  documents the bulk request rejected. A failed `addDocuments()` may
+  already have indexed some of the documents.
 
 (neuron-trace-inference)=
 
@@ -640,7 +702,7 @@ requests:
 | `PhpSerializer`, `IgbinarySerializer` | They unserialize workflow records with no class restriction. |
 | `MySQLToolkit`, `PGSQLToolkit` and their tools | Blocking PDO queries. |
 | `FileSystemToolkit` and its tools | Blocking file I/O; `BashTool` waits on a child process. |
-| `SESTool` from the AWS toolkit | The AWS SDK client sends synchronously. |
+| `SESTool` from the AWS toolkit, `AwsBedrockEmbeddingsProvider` | The AWS SDK client sends synchronously. |
 | `FileDataLoader`, `PdfReader` | Blocking file reads; `PdfReader` waits on a `pdftotext` child process. |
 | `FileVectorStore`, `MariaDBVectorStore`, `MongoDBVectorStore` | Blocking file, PDO and MongoDB driver I/O. |
 | `TypesenseVectorStore` | It sends through the Typesense SDK client, for which Kinetis has no non-blocking transport. |
@@ -698,7 +760,9 @@ It reports:
 - `UsageMeter::watch()` and `new UsageMeter`.
 
 It does not report a workflow interrupt and resume, streaming under
-RoadRunner, `TypesenseVectorStore`, a speech-to-text provider given a
+RoadRunner, `TypesenseVectorStore`, `AwsBedrockEmbeddingsProvider`,
+an Elasticsearch or OpenSearch store given a client built outside the
+Kinetis factories, a speech-to-text provider given a
 `NeuronHttpClient`, an `McpConnector` configuration that is not an array
 literal, a call whose class name is an expression or whose arguments are
 spread, or an object built outside the analysed code, such as by a
