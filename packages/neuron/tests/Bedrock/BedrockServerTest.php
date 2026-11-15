@@ -25,46 +25,53 @@ final class BedrockServerTest extends TestCase
 {
     private const string HOST = '127.0.0.1:8195';
 
-    /** @var resource|null */
-    private static $server = null;
+    private const string OTHER_HOST = '127.0.0.1:8196';
 
-    private static ?SigV4SigningClient $client = null;
+    /** @var list<resource> */
+    private static array $servers = [];
+
+    /** @var array<string, SigV4SigningClient> */
+    private static array $clients = [];
 
     /** @var list<string> */
     private array $markFiles = [];
 
     public static function setUpBeforeClass(): void
     {
-        // A worker keeps writing to a client that left until it notices, and
-        // a busy worker accepts nothing.
-        self::$server = proc_open(
-            ['php', '-S', self::HOST, \dirname(__DIR__) . '/Fixtures/bedrock-server.php'],
-            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-            $pipes,
-            null,
-            [...getenv(), 'PHP_CLI_SERVER_WORKERS' => '8'],
-        );
+        foreach ([self::HOST, self::OTHER_HOST] as $host) {
+            // A worker keeps writing to a client that left until it notices,
+            // and a busy worker accepts nothing.
+            self::$servers[] = proc_open(
+                ['php', '-S', $host, \dirname(__DIR__) . '/Fixtures/bedrock-server.php'],
+                [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $pipes,
+                null,
+                [...getenv(), 'PHP_CLI_SERVER_WORKERS' => '8'],
+            );
 
-        $deadline = microtime(true) + 5.0;
+            $deadline = microtime(true) + 5.0;
 
-        while (($socket = @stream_socket_client('tcp://' . self::HOST, timeout: 0.1)) === false) {
-            if (microtime(true) > $deadline) {
-                self::fail('The fixture server never started accepting connections.');
+            while (($socket = @stream_socket_client('tcp://' . $host, timeout: 0.1)) === false) {
+                if (microtime(true) > $deadline) {
+                    self::fail("The fixture server on {$host} never started accepting connections.");
+                }
+
+                usleep(20_000);
             }
 
-            usleep(20_000);
+            fclose($socket);
         }
-
-        fclose($socket);
     }
 
     public static function tearDownAfterClass(): void
     {
-        if (self::$server !== null) {
-            proc_terminate(self::$server);
-            proc_close(self::$server);
-            self::$server = null;
+        foreach (self::$servers as $server) {
+            proc_terminate($server);
+            proc_close($server);
         }
+
+        self::$servers = [];
+        self::$clients = [];
     }
 
     protected function tearDown(): void
@@ -76,7 +83,10 @@ final class BedrockServerTest extends TestCase
 
     public function test_two_chats_overlap_and_the_loop_keeps_running(): void
     {
-        $chat = fn (): ?string => $this->provider('slow')->chat(new UserMessage('ping'))->message()->getContent();
+        // A `php -S` worker can accept both connections and then serve them
+        // one after the other, so each call has a server of its own.
+        $chat = fn (string $host): \Closure => fn (): ?string => $this->provider('slow', host: $host)
+            ->chat(new UserMessage('ping'))->message()->getContent();
 
         $ticks = 0;
         $timer = EventLoop::repeat(0.05, static function () use (&$ticks): void {
@@ -85,7 +95,7 @@ final class BedrockServerTest extends TestCase
         $start = microtime(true);
 
         try {
-            $answers = concurrently([$chat, $chat]);
+            $answers = concurrently([$chat(self::HOST), $chat(self::OTHER_HOST)]);
         } finally {
             EventLoop::cancel($timer);
         }
@@ -158,17 +168,17 @@ final class BedrockServerTest extends TestCase
         self::assertStringContainsString('aborted after', $this->awaitMark($mark));
     }
 
-    private function provider(string $model, int $maxResponseBytes = 8 * 1024 * 1024): BedrockProvider
+    private function provider(string $model, int $maxResponseBytes = 8 * 1024 * 1024, string $host = self::HOST): BedrockProvider
     {
-        self::$client ??= new SigV4SigningClient(
-            'http://' . self::HOST,
+        self::$clients[$host] ??= new SigV4SigningClient(
+            'http://' . $host,
             'us-east-1',
             'bedrock',
             new StaticCredentials(),
             transport: SignedTransport::create(['timeout' => 10, 'max_duration' => 10]),
         );
 
-        return new BedrockProvider(self::$client, $model, maxResponseBytes: $maxResponseBytes);
+        return new BedrockProvider(self::$clients[$host], $model, maxResponseBytes: $maxResponseBytes);
     }
 
     private function markFile(): string
