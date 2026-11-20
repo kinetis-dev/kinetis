@@ -13,6 +13,11 @@ function session_token(): string
     return '';
 }
 
+function connection_aborted(): int
+{
+    return 0;
+}
+
 final class Foo
 {
     public mixed $_SERVER = null;
@@ -39,5 +44,6 @@ final class Foo
         function_exists('session_start');
         session_token();
         \App\session_token();
+        connection_aborted();
     }
 }

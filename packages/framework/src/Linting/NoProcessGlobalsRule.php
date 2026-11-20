@@ -19,11 +19,13 @@ use PHPStan\Rules\RuleErrorBuilder;
 /**
  * Flags application code that reaches past the PSR-7 request and response
  * into the PHP process or SAPI: `exit` and `die`, the request
- * superglobals, and the SAPI header, cookie, and session functions. In a
- * persistent worker `exit` ends every in-flight request on the worker's
- * loop. Under RoadRunner and Lambda the superglobals are not the request
- * and a SAPI header never reaches the client; under PHP-FPM and
+ * superglobals, and the SAPI header, cookie, session, and connection-state
+ * functions. In a persistent worker `exit` ends every in-flight request on
+ * the worker's loop. Under RoadRunner and Lambda the superglobals are not
+ * the request and a SAPI header never reaches the client; under PHP-FPM and
  * FrankenPHP both bypass the request and response Kinetis builds. The
+ * SAPI's connection status answers only under some runtimes;
+ * `Kinetis\Runtime\ClientConnectionInterface` answers under every one. The
  * kinds, their replacements, and how to exempt a site are documented in
  * {@link https://kinetis.dev/docs/runtime-adapters.html#process-and-sapi-globals},
  * "Process and SAPI globals".
@@ -63,6 +65,10 @@ final class NoProcessGlobalsRule implements Rule
         . 'process-wide state rather than the request and response. Use Kinetis\Session\Session from '
         . 'kinetis/session.';
 
+    private const string CONNECTION = '%s reads or changes the SAPI\'s connection state rather than the request: '
+        . 'RoadRunner and Lambda never set it, PHP-FPM ends the script instead of reporting it, and FrankenPHP '
+        . 'reports it per worker request. Inject Kinetis\Runtime\ClientConnectionInterface and call isGone().';
+
     /** Superglobal names, without the `$`, to their replacement. */
     private const array SUPERGLOBALS = [
         '_GET' => 'ServerRequestInterface::getQueryParams()',
@@ -85,6 +91,9 @@ final class NoProcessGlobalsRule implements Rule
         'http_response_code' => self::HEADERS,
         'setcookie' => self::COOKIES,
         'setrawcookie' => self::COOKIES,
+        'connection_aborted' => self::CONNECTION,
+        'connection_status' => self::CONNECTION,
+        'ignore_user_abort' => self::CONNECTION,
     ];
 
     public function __construct(
