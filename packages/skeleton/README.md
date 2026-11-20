@@ -227,8 +227,12 @@ analyser has no reason to carry.
 request the worker goes on to handle; `NoBlockingIoRule` flags a call
 that waits synchronously instead of yielding, holding the event loop and
 everything else on it until it returns; `NoProcessGlobalsRule` flags
-`exit`, the request superglobals, and the SAPI `header()`, cookie and
-session functions, which bypass the PSR-7 request and response.
+`exit`, the request superglobals, the SAPI `header()`, cookie and
+session functions, which bypass the PSR-7 request and response, and the
+connection-state functions `connection_aborted()`, `connection_status()`
+and `ignore_user_abort()`. A request asks whether its client has left
+through `Kinetis\Runtime\ClientConnectionInterface::isGone()`; see
+[When the client leaves](https://kinetis.dev/docs/runtime-adapters.html#runtime-client-connection).
 
 They are guardrails over three specific mistakes, not a complete proof of
 persistent-worker correctness. `AGENTS.md` asks for a closing pass by
