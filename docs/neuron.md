@@ -222,7 +222,8 @@ browser, use `AgentStream` ({ref}`neuron-browser-stream`).
 `Kinetis\Neuron\AgentStream` sends an agent run to the browser as
 Server-Sent Events in one of Neuron's UI protocols: `VercelAIAdapter`
 for the Vercel AI SDK's `useChat`, `AGUIAdapter` for AG-UI clients. Set
-the adapter on the agent, then pass the same adapter and the run to
+the adapter on the agent, then pass the same adapter, the request's
+`Kinetis\Runtime\ClientConnectionInterface` and the run to
 `AgentStream`:
 
 ```{code-block} php
@@ -232,6 +233,7 @@ use Kinetis\Http\Attributes\Body;
 use Kinetis\Http\Attributes\Post;
 use Kinetis\Http\StreamedResponse;
 use Kinetis\Neuron\AgentStream;
+use Kinetis\Runtime\ClientConnectionInterface;
 use NeuronAI\Agent\Adapters\VercelAIAdapter;
 use NeuronAI\Agent\Agent;
 use NeuronAI\Chat\Messages\UserMessage;
@@ -241,42 +243,47 @@ final readonly class AssistantController
     public function __construct(private Providers $providers) {}
 
     #[Post('/assistant/{conversationId}')]
-    public function ask(string $conversationId, #[Body] Question $question): StreamedResponse
-    {
+    public function ask(
+        string $conversationId,
+        #[Body] Question $question,
+        ClientConnectionInterface $connection,
+    ): StreamedResponse {
         $adapter = new VercelAIAdapter();
 
         $run = Agent::make()
-            ->setAiProvider($this->providers->browserOpenAi())
+            ->setAiProvider($this->providers->browserOpenAi($connection))
             ->setInstructions('Answer questions about orders. Be brief.')
             ->setThreadId($conversationId)
             ->setStreamAdapter(static fn (): VercelAIAdapter => $adapter)
             ->stream(new UserMessage($question->text));
 
-        return new AgentStream($adapter)->response($run);
+        return new AgentStream($adapter, $connection)->response($run);
     }
 }
 ```
 
 The controller follows the same path as `AnswerController`, and builds
-the agent itself because it hands the run to `AgentStream`. The provider
-comes from a second `Providers` method that stops its stream when the
-browser leaves:
+the agent itself because it hands the run to `AgentStream`. The Kernel
+binds `ClientConnectionInterface` for each request, so the controller
+receives it like any other dependency. The provider comes from a second
+`Providers` method that stops its stream when the browser leaves:
 
 ```{code-block} php
+use Kinetis\Runtime\ClientConnectionInterface;
 use NeuronAI\HttpClient\StoppableHttpClient;
 
-public function browserOpenAi(): OpenAI
+public function browserOpenAi(ClientConnectionInterface $connection): OpenAI
 {
     return new OpenAI(
         key: $this->apiKey,
         model: 'gpt-4.1-mini',
-        httpClient: new StoppableHttpClient(
-            $this->client,
-            static fn (): bool => connection_aborted() === 1,
-        ),
+        httpClient: new StoppableHttpClient($this->client, $connection->isGone(...)),
     );
 }
 ```
+
+`Providers` is application-scoped, so the connection is an argument of
+the call rather than a constructor dependency.
 
 The response is `200` with the adapter's headers: `Content-Type:
 text/event-stream`, `X-Accel-Buffering: no` for nginx, and the
@@ -292,20 +299,17 @@ the AI SDK, `RUN_ERROR` for AG-UI. Its text is the adapter's neutral
 "The run failed.", never the exception message. The exception is then
 rethrown, and the framework logs it.
 
-**When the browser leaves.** `connection_aborted()` turns true at the
-first flush after the browser has gone. `StoppableHttpClient` asks its
-predicate before each event the provider reads. Neuron then ends the
-answer with the text streamed so far, with the stop reason
-`StoppableHttpClient::STOP_REASON` (`'stopped'`), and closes the
-provider stream. A stop before the first word fails the run with a
-`ProviderException`. `AgentStream` does not rethrow a failure once the
-browser has gone, because no one is left to read it; Neuron's observers
-still record it. What each runtime does:
-
-| Runtime | When the browser leaves |
-|---|---|
-| FrankenPHP (worker mode) | The script keeps running and the answer stops as described above. The provider connection closes when the request ends ({ref}`runtime-reference-frankenphp-fpm`). |
-| PHP-FPM behind nginx | nginx closes the FastCGI connection, and PHP ends the script at the next write. The provider connection closes with the request. No stopped answer is recorded. |
+**When the browser leaves.** `StoppableHttpClient` asks
+`$connection->isGone()` before each event the provider reads. Once the
+runtime reports the browser gone, Neuron ends the answer with the text
+streamed so far, with the stop reason `StoppableHttpClient::STOP_REASON`
+(`'stopped'`), and closes the provider stream. A stop before the first
+word fails the run with a `ProviderException`. `AgentStream` does not
+rethrow a failure once the browser has gone, because no one is left to
+read it; Neuron's observers still record it. Which runtimes report the
+departure, and when, is listed in {ref}`runtime-client-connection`:
+under FrankenPHP the answer stops as described here, and under PHP-FPM
+the script ends at the next write, so no stopped answer is recorded.
 
 ## Several calls at once
 

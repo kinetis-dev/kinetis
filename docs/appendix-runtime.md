@@ -285,6 +285,17 @@ the request boundary. It is one turn of the loop that never waits for
 the loop to become empty; a failure in it is written to the SAPI error
 log, and the worker goes on to the next request.
 
+Both adapters answer `clientConnection()` with a `SapiClientConnection`,
+which reads `connection_aborted()`. The SAPI marks the connection
+aborted when a write or a flush fails, and PHP clears the mark at every
+request startup — FrankenPHP's worker request startup included — so the
+one stateless reader answers for whichever request the worker is
+serving. FrankenPHP keeps `ignore_user_abort` on in worker threads, so
+the script runs on and reads the mark. PHP-FPM leaves it off, so the
+failing write ends the script before anything can read it.
+{ref}`runtime-client-connection` gives the resulting behavior per
+runtime.
+
 A streamed response's failing emitter is the one throwable the bridge
 contains. By then the status, the headers and some number of body bytes
 have left the process, so there is no replacement response to send — and
@@ -556,6 +567,8 @@ interface RuntimeAdapterInterface
     public function run(callable $handler): void;
 
     public function isPersistent(): bool;
+
+    public function clientConnection(): ClientConnectionInterface;
 }
 ```
 
@@ -563,6 +576,12 @@ interface RuntimeAdapterInterface
 the end of every request — worth doing in a worker that keeps serving,
 pure waste under a boot-per-request SAPI, where request shutdown releases
 that memory anyway.
+
+`clientConnection()` returns the object the Kernel binds into every
+request scope as `ClientConnectionInterface`. It lives as long as the
+worker and holds no request state, answering for the request in flight.
+An environment that cannot observe a client leaving returns
+`UnobservableClientConnection`, which never reports one.
 
 Hold the adapter to the contract the built-in ones meet: implement a
 `Kinetis\Testing\Runtime\RuntimeAdapterDriver` for it and extend

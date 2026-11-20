@@ -44,7 +44,9 @@ These hold regardless of adapter, driver, or use case.
 - **Process and SAPI globals.** Application code reads the request from
   the PSR-7 request it is given and answers through the response it
   returns: no `exit` or `die`, no request superglobal, and no
-  `header()`, `setcookie()` or native `session_*()` call.
+  `header()`, `setcookie()`, native `session_*()` or
+  `connection_aborted()` call — a departed client is asked of
+  `ClientConnectionInterface` ({ref}`runtime-client-connection`).
   {ref}`process-globals`.
 - **Deadlines, cancellation, and backpressure.** An outbound call has an
   explicit timeout below whatever is waiting on it, and nothing waits on

@@ -69,8 +69,8 @@ the `Kernel` it builds is what handles requests. In order, it:
    out of the booted container rather than the one built in step 3 — so
    a `bootstrap.php` that narrowed it decides this request's scheme and
    client address.
-5. Constructs the `Kernel` with the adapter's own `isPersistent()`, and
-   hands `Kernel::handle()` to the adapter's request loop.
+5. Constructs the `Kernel` with the adapter's own `isPersistent()` and
+   `clientConnection()`, and hands `Kernel::handle()` to the adapter's request loop.
 6. Disposes the application once that loop returns — a worker shutting
    down, or the end of the one request a boot-per-request SAPI served —
    so an app-scoped resource opened at boot is closed rather than
@@ -145,7 +145,9 @@ Every call to `Kernel::handle()` follows the same shape:
    reaches step 3 and no `RequestScope` is created for it. See
    {doc}`middleware`.
 3. The pipeline's innermost handler creates a fresh `RequestScope` from
-   the persistent `AppScope` container (see {doc}`container`).
+   the persistent `AppScope` container (see {doc}`container`) and binds
+   the adapter's `ClientConnectionInterface` into it
+   ({ref}`runtime-client-connection`).
 4. Creating the scope runs every initializer registered by installed
    packages through `AppScope::onRequestScopeCreated()` (see
    {doc}`container`). With `kinetis/database-bridge` installed, one of
