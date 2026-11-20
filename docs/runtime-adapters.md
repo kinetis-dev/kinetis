@@ -803,7 +803,8 @@ SAPIs and is reported by `NoProcessGlobalsRule` (below).
 | PHP-FPM behind nginx | never, in the supported configuration | PHP ends the script at the first write after nginx closed the FastCGI connection (`ignore_user_abort` is off). Destructors run at shutdown, and upstream connections close with the request. |
 | RoadRunner | never | No stream is emitted: a streamed response is answered with `501`. |
 | AWS Lambda | never | No stream is emitted: a streamed response fails the invocation. |
-| `TestApplication`, or a `Kernel` built by hand | never, unless a test passes its own implementation as the Kernel's `clientConnection` | — |
+| `TestApplication` | never | — |
+| A `Kernel` built by hand | never, unless the test passes its own implementation as the Kernel's `clientConnection` | — |
 
 (process-globals)=
 ## Process and SAPI globals
