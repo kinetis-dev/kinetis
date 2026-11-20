@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Runtime\Fixtures\StartupProject\Http;
 
 use Kinetis\Http\Attributes\Get;
+use Kinetis\Runtime\ClientConnectionInterface;
 
 final class StartupPingController
 {
@@ -12,5 +13,11 @@ final class StartupPingController
     public function ping(): string
     {
         return 'pong';
+    }
+
+    #[Get('/startup-connection')]
+    public function connection(ClientConnectionInterface $connection): string
+    {
+        return $connection->isGone() ? 'gone' : 'here';
     }
 }

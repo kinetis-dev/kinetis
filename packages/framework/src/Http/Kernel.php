@@ -20,7 +20,9 @@ use Kinetis\Http\Routing\Router;
 use Kinetis\Logging\SafeLogger;
 use Kinetis\OpenApi\OpenApiDocumentProvider;
 use Kinetis\Runtime\AppEnvironment;
+use Kinetis\Runtime\ClientConnectionInterface;
 use Kinetis\Runtime\StreamableResponseInterface;
+use Kinetis\Runtime\UnobservableClientConnection;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -61,6 +63,11 @@ use Throwable;
  * response's disposal happens after `handle()` has returned, so the flag
  * travels with its {@see StreamScopeLease}.
  *
+ * `$clientConnection` — also from the driving adapter — is bound into
+ * every RequestScope as {@see ClientConnectionInterface}. The default
+ * never reports a departure, which is what a test or a hand-built Kernel
+ * gets.
+ *
  * Every request runs through a global PSR-15 middleware pipeline, in the
  * order {@see GlobalMiddlewareOrder::resolve()} computes from `$app`'s
  * own `AppScope::middleware()` registrations and
@@ -100,6 +107,7 @@ final class Kernel
         private readonly AppScope $app,
         private readonly Router $router,
         private readonly bool $isPersistent = false,
+        private readonly ClientConnectionInterface $clientConnection = new UnobservableClientConnection(),
         private readonly ?HttpCache $httpCache = null,
         /** @var list<class-string> */
         private readonly array $discoveredGlobalMiddleware = [],
@@ -250,6 +258,9 @@ final class Kernel
         // entry point unchanged.
         $scope->instance(Router::class, $this->router);
         $scope->instance(OpenApiDocumentProvider::class, $this->openApiDocuments);
+        // Per request rather than in AppScope: the answer is about the
+        // request in flight, so an app-scoped service must not hold it.
+        $scope->instance(ClientConnectionInterface::class, $this->clientConnection);
 
         try {
             $response = $this->matchAndDispatch($scope, $request);

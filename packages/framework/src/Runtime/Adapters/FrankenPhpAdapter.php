@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Kinetis\Runtime\Adapters;
 
 use Kinetis\Http\TrustedProxies;
+use Kinetis\Runtime\ClientConnectionInterface;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
 use Kinetis\Runtime\RuntimeAdapterInterface;
+use Kinetis\Runtime\SapiClientConnection;
 use Kinetis\Runtime\SuperglobalsBridge;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -71,5 +73,11 @@ final class FrankenPhpAdapter implements RuntimeAdapterInterface
     public function isPersistent(): bool
     {
         return true;
+    }
+
+    #[\Override]
+    public function clientConnection(): ClientConnectionInterface
+    {
+        return new SapiClientConnection();
     }
 }
