@@ -28,7 +28,7 @@
             "description": "The Runtime-Aware PHP Framework",
             "namespace": "Kinetis\\",
             "testNamespace": "Kinetis\\Tests\\",
-            "version": "1.28.0",
+            "version": "1.29.0",
             "bin": [
                 "bin/kinetis"
             ],
@@ -152,7 +152,7 @@
             "description": "AWS Lambda (Bref) runtime adapter for Kinetis — polls the Lambda Runtime API and converts API Gateway v2 payloads to/from PSR-7.",
             "namespace": "Kinetis\\BrefAdapter\\",
             "testNamespace": "Kinetis\\BrefAdapter\\Tests\\",
-            "version": "1.2.8",
+            "version": "1.2.9",
             "requires": [
                 "framework"
             ],
@@ -621,7 +621,7 @@
             "description": "Runs Neuron AI providers over kinetis/revolt-http-client: a non-blocking, origin-pinned, deadline- and byte-bounded HttpClientInterface for neuron-core/neuron-ai, safe to share across requests in a persistent worker, an Amazon Bedrock chat and embeddings provider over kinetis/aws-sigv4, and the application's own #[McpTool] tools as Neuron tools, called in process in the current request's scope.",
             "namespace": "Kinetis\\Neuron\\",
             "testNamespace": "Kinetis\\Neuron\\Tests\\",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "requires": [
                 "aws-sigv4",
                 "framework",
@@ -839,7 +839,7 @@
             "description": "RoadRunner runtime adapter for Kinetis — speaks the PSR7Worker/Goridge protocol and converts to/from PSR-7.",
             "namespace": "Kinetis\\RoadRunnerAdapter\\",
             "testNamespace": "Kinetis\\RoadRunnerAdapter\\Tests\\",
-            "version": "1.3.5",
+            "version": "1.3.6",
             "requires": [
                 "framework"
             ],
