@@ -49,4 +49,13 @@ interface RuntimeAdapterInterface
      * {@see \Kinetis\Http\StreamScopeLease}.
      */
     public function isPersistent(): bool;
+
+    /**
+     * How this runtime tells whether the client of the request in flight
+     * has left. The instance lives as long as the worker and holds no
+     * request state: it answers for whichever request is being served.
+     * {@see HttpStartup} hands it to {@see \Kinetis\Http\Kernel}, which
+     * binds it into every request's RequestScope.
+     */
+    public function clientConnection(): ClientConnectionInterface;
 }

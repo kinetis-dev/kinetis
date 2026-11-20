@@ -42,6 +42,10 @@ final class NoProcessGlobalsRuleTest extends RuleTestCase
         . 'process-wide state rather than the request and response. Use Kinetis\Session\Session from '
         . 'kinetis/session.';
 
+    private const string CONNECTION = '%s reads or changes the SAPI\'s connection state rather than the request: '
+        . 'RoadRunner and Lambda never set it, PHP-FPM ends the script instead of reporting it, and FrankenPHP '
+        . 'reports it per worker request. Inject Kinetis\Runtime\ClientConnectionInterface and call isGone().';
+
     protected function getRule(): Rule
     {
         return new NoProcessGlobalsRule(self::createReflectionProvider());
@@ -78,6 +82,9 @@ final class NoProcessGlobalsRuleTest extends RuleTestCase
             [sprintf(self::EXIT, 'exit'), 40],
             [sprintf(self::EXIT, 'die'), 45],
             [sprintf(self::EXIT, 'exit'), 50],
+            [sprintf(self::CONNECTION, 'connection_aborted()'), 55],
+            [sprintf(self::CONNECTION, 'connection_status()'), 56],
+            [sprintf(self::CONNECTION, 'ignore_user_abort()'), 57],
         ]);
     }
 
@@ -110,6 +117,9 @@ final class NoProcessGlobalsRuleTest extends RuleTestCase
             40 => ['kinetis.exit'],
             45 => ['kinetis.exit'],
             50 => ['kinetis.exit'],
+            55 => ['kinetis.sapiCall'],
+            56 => ['kinetis.sapiCall'],
+            57 => ['kinetis.sapiCall'],
         ], $identifiers);
     }
 
@@ -117,7 +127,8 @@ final class NoProcessGlobalsRuleTest extends RuleTestCase
     {
         // The test container reflects functions PHP has loaded, not ones
         // declared in an analysed file, so App\header() must exist here
-        // for name resolution to find it the way a project analysis does.
+        // for name resolution to find it the way a project analysis does;
+        // the same holds for App\connection_aborted().
         require_once __DIR__ . '/Fixtures/ProcessGlobalsFree.php';
 
         $this->analyse([__DIR__ . '/Fixtures/ProcessGlobalsFree.php'], []);

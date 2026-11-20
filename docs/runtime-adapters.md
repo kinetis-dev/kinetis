@@ -47,6 +47,8 @@ The choice changes four things an application acts on:
   what that means for `concurrently()`.
 - **Streaming.** FrankenPHP and PHP-FPM stream a `StreamedResponse`.
   RoadRunner answers one with `501`, and Lambda fails the invocation.
+  Only FrankenPHP reports a client that leaves mid-stream; see
+  {ref}`runtime-client-connection`.
 
 Every runtime also needs the settings under "Request bodies: one contract
 under every runtime" and, behind a proxy, `TRUSTED_PROXIES`.
@@ -750,6 +752,60 @@ TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
 {ref}`runtime-reference-forwarded-headers` describes how each adapter
 applies the policy.
 
+(runtime-client-connection)=
+## When the client leaves
+
+A handler that streams asks whether its client is still there through
+`Kinetis\Runtime\ClientConnectionInterface`. The Kernel binds the
+running adapter's instance into every request scope, so a controller, a
+request-scoped service or a streamed response's emitter injects it like
+any other dependency. It is not bound in the application scope: an
+application-scoped service that asks for it fails to resolve.
+
+```{code-block} php
+use Kinetis\Http\Attributes\Get;
+use Kinetis\Http\StreamedResponse;
+use Kinetis\Runtime\ClientConnectionInterface;
+use Nyholm\Psr7\Response;
+
+#[Get('/orders/feed')]
+public function feed(ClientConnectionInterface $connection): StreamedResponse
+{
+    $updates = $this->orderFeed->updates();
+
+    return new StreamedResponse(
+        new Response(200, ['Content-Type' => 'text/event-stream', 'X-Accel-Buffering' => 'no']),
+        static function () use ($updates, $connection): void {
+            foreach ($updates as $update) {
+                echo "data: {$update}\n\n";
+                flush();
+
+                if ($connection->isGone()) {
+                    return;
+                }
+            }
+        },
+    );
+}
+```
+
+`$this->orderFeed` stands for the application's own source of updates.
+
+`isGone()` is true once the runtime has observed that this request's
+client left, and stays true for the rest of the request. False means not
+observed, which is also the answer of a runtime that never observes it.
+Call it instead of `connection_aborted()`, which answers only under some
+SAPIs and is reported by `NoProcessGlobalsRule` (below).
+
+| Runtime | `isGone()` | When it turns true |
+|---|---|---|
+| FrankenPHP worker mode | observed | At the first write or `flush()` after the client left. The script keeps running, because FrankenPHP turns `ignore_user_abort` on in worker threads, and the next request starts connected. |
+| PHP-FPM behind nginx | never, in the supported configuration | PHP ends the script at the first write after nginx closed the FastCGI connection (`ignore_user_abort` is off). Destructors run at shutdown, and upstream connections close with the request. |
+| RoadRunner | never | No stream is emitted: a streamed response is answered with `501`. |
+| AWS Lambda | never | No stream is emitted: a streamed response fails the invocation. |
+| `TestApplication` | never | — |
+| A `Kernel` built by hand | never, unless the test passes its own implementation as the Kernel's `clientConnection` | — |
+
 (process-globals)=
 ## Process and SAPI globals
 
@@ -771,6 +827,11 @@ behaves differently under each runtime:
 - **SAPI header, cookie, and session functions** never reach the client
   under RoadRunner and Lambda, whose CLI SAPI discards them. Under PHP-FPM
   and FrankenPHP they bypass the response Kinetis emits.
+- **SAPI connection-state functions** answer only where the SAPI tracks
+  the client: RoadRunner and Lambda never set the status, PHP-FPM ends
+  the script instead of reporting it, and FrankenPHP reports it per
+  worker request. `ClientConnectionInterface`, above, answers under every
+  runtime.
 
 `Kinetis\Linting\NoProcessGlobalsRule` is a PHPStan rule that flags each
 of these. It ships under the framework's main autoload beside
@@ -789,7 +850,7 @@ rules:
 |---|---|---|
 | `kinetis.exit` | `exit` and `die`, with or without a status, and `\exit()` | return a response or throw from a handler; a console command returns its exit code |
 | `kinetis.superglobal` | `$_GET`, `$_POST`, `$_COOKIE`, `$_FILES`, `$_REQUEST`, `$_SESSION`, `$_SERVER`, read or written | `getQueryParams()`, `getParsedBody()`, `getCookieParams()`, `getUploadedFiles()`, and `getServerParams()` or a request header on `ServerRequestInterface`; `Kinetis\Session\Session` from {doc}`session`; `getenv()` for the environment |
-| `kinetis.sapiCall` | `header()`, `header_remove()`, `http_response_code()`, `setcookie()`, `setrawcookie()`, and every global `session_*()` function | the status and headers, `Set-Cookie` included, on the returned `ResponseInterface`; `Kinetis\Session\Session` |
+| `kinetis.sapiCall` | `header()`, `header_remove()`, `http_response_code()`, `setcookie()`, `setrawcookie()`, every global `session_*()` function, `connection_aborted()`, `connection_status()`, and `ignore_user_abort()` | the status and headers, `Set-Cookie` included, on the returned `ResponseInterface`; `Kinetis\Session\Session`; `ClientConnectionInterface::isGone()` |
 
 Function names resolve the way PHP resolves them, so an unqualified
 `header()` inside a namespace that declares its own `header()` is not

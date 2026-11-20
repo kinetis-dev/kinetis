@@ -49,4 +49,11 @@ final class ProcessGlobalsCalls
     {
         \exit(0);
     }
+
+    public function connectionState(): void
+    {
+        connection_aborted();
+        \connection_status();
+        ignore_user_abort(true);
+    }
 }

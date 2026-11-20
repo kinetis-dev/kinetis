@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\Runtime\Adapters;
 
 use Kinetis\Http\TrustedProxies;
+use Kinetis\Runtime\ClientConnectionInterface;
 use Kinetis\Runtime\RuntimeAdapterInterface;
+use Kinetis\Runtime\SapiClientConnection;
 use Kinetis\Runtime\SuperglobalsBridge;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -41,5 +43,11 @@ final class FpmAdapter implements RuntimeAdapterInterface
     public function isPersistent(): bool
     {
         return false;
+    }
+
+    #[\Override]
+    public function clientConnection(): ClientConnectionInterface
+    {
+        return new SapiClientConnection();
     }
 }

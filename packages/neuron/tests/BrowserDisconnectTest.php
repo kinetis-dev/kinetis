@@ -16,7 +16,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class BrowserDisconnectTest extends TestCase
 {
-    public function test_a_browser_that_leaves_stops_the_answer_and_the_provider_connection(): void
+    public function test_a_browser_that_leaves_stops_the_answer_and_the_next_request_starts_connected(): void
     {
         $sapi = getenv('KINETIS_NEURON_SAPI');
         $host = getenv('KINETIS_NEURON_SAPI_HOST');
@@ -27,11 +27,11 @@ final class BrowserDisconnectTest extends TestCase
         }
 
         $mark = $stateDir . '/' . bin2hex(random_bytes(8));
-        $socket = stream_socket_client('tcp://' . $host, $code, $message, 5.0);
-        self::assertNotFalse($socket, "No connection to {$host}: {$message}");
-        stream_set_timeout($socket, 5);
+        $socket = self::connect($host);
+        $body = json_encode(['mark' => $mark], JSON_THROW_ON_ERROR);
 
-        fwrite($socket, 'GET /?mark=' . rawurlencode($mark) . " HTTP/1.1\r\nHost: {$host}\r\nConnection: close\r\n\r\n");
+        fwrite($socket, "POST / HTTP/1.1\r\nHost: {$host}\r\nContent-Type: application/json\r\n"
+            . 'Content-Length: ' . strlen($body) . "\r\nConnection: close\r\n\r\n{$body}");
 
         $received = '';
 
@@ -55,12 +55,35 @@ final class BrowserDisconnectTest extends TestCase
         if ($sapi === 'frankenphp') {
             // The worker saw the client leave at a flush, Neuron stopped
             // the answer, and the emitter returned normally.
-            self::assertSame("emitter returned aborted=1 stop=stopped\n", $server);
+            self::assertSame("emitter returned gone=1 stop=stopped\n", $server);
         } else {
             // PHP-FPM ends the script at the first write after nginx drops
             // the connection, so the emitter never returns.
             self::assertSame('', $server);
         }
+
+        // The next request on the same worker thread starts connected:
+        // the departure above belonged to its own request.
+        $probe = $stateDir . '/' . bin2hex(random_bytes(8));
+        $socket = self::connect($host);
+        fwrite($socket, 'GET /?probe=' . rawurlencode($probe) . " HTTP/1.1\r\nHost: {$host}\r\nConnection: close\r\n\r\n");
+        $reply = (string) stream_get_contents($socket);
+        fclose($socket);
+        $gone = self::await($probe, 1.0);
+        @unlink($probe);
+
+        self::assertStringStartsWith('HTTP/1.1 200', $reply);
+        self::assertSame("gone=0\n", $gone);
+    }
+
+    /** @return resource */
+    private static function connect(string $host)
+    {
+        $socket = stream_socket_client('tcp://' . $host, $code, $message, 5.0);
+        self::assertNotFalse($socket, "No connection to {$host}: {$message}");
+        stream_set_timeout($socket, 5);
+
+        return $socket;
     }
 
     /** What $file holds once it is non-empty, or '' after $seconds. */

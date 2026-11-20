@@ -13,6 +13,7 @@ use Kinetis\Cache\HttpCache;
 use Kinetis\Cache\OpenApiCache;
 use Kinetis\Config\Config;
 use Kinetis\Container\AppScope;
+use Kinetis\Container\Exception\NotFoundException;
 use Kinetis\Container\RequestScope;
 use Kinetis\Events\EventListenerRegistry;
 use Kinetis\Http\Kernel;
@@ -23,7 +24,11 @@ use Kinetis\Instrumentation\NullTelemetry;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\OpenApi\OpenApiAccess;
 use Kinetis\Runtime\AppEnvironment;
+use Kinetis\Runtime\ClientConnectionInterface;
 use Kinetis\Tests\Fixtures\InMemoryLogger;
+use Kinetis\Tests\Http\Fixtures\AppScopedConnectionWatcher;
+use Kinetis\Tests\Http\Fixtures\ClientConnectionController;
+use Kinetis\Tests\Http\Fixtures\GoneClientConnection;
 use Kinetis\Tests\Fixtures\ThrowingLogger;
 use Kinetis\Tests\Http\Fixtures\ClassLevelMiddleware;
 use Kinetis\Tests\Http\Fixtures\ConstrainedRouteController;
@@ -442,6 +447,64 @@ final class KernelTest extends TestCase
         (new Kernel($app, $router, isPersistent: false))->handle(new ServerRequest('GET', '/users/1'));
 
         self::assertSame(0, $GLOBALS['kinetisGcCollectCyclesCallCount']);
+    }
+
+    // --- The client connection ---
+
+    /**
+     * The connection handed to the Kernel is what a controller reads,
+     * through its constructor and through a route-method parameter alike.
+     */
+    public function test_a_controller_reads_the_client_connection_the_kernel_was_given(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+        $router = new Router();
+        $router->register(ClientConnectionController::class);
+
+        $response = (new Kernel($app, $router, clientConnection: new GoneClientConnection()))
+            ->handle(new ServerRequest('GET', '/client-connection'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['constructor' => true, 'parameter' => true], json_decode((string) $response->getBody(), true));
+    }
+
+    public function test_a_kernel_given_no_client_connection_never_reports_the_client_gone(): void
+    {
+        $app = new AppScope();
+        $app->boot();
+        $router = new Router();
+        $router->register(ClientConnectionController::class);
+
+        $response = (new Kernel($app, $router))->handle(new ServerRequest('GET', '/client-connection'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['constructor' => false, 'parameter' => false], json_decode((string) $response->getBody(), true));
+    }
+
+    /**
+     * The answer is about one request, so the application scope cannot
+     * supply it — neither directly nor to a service it owns.
+     */
+    public function test_the_client_connection_is_not_resolvable_from_the_application_scope(): void
+    {
+        $app = new AppScope();
+        $app->instance(AppEnvironment::class, AppEnvironment::Development);
+        $app->bind(AppScopedConnectionWatcher::class);
+        $app->boot();
+        $router = new Router();
+        $router->register(ClientConnectionController::class);
+        $kernel = new Kernel($app, $router, clientConnection: new GoneClientConnection());
+
+        $response = $kernel->handle(new ServerRequest('GET', '/client-connection/app-scoped'));
+
+        self::assertSame(500, $response->getStatusCode());
+        /** @var array{message: string} $body */
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertStringContainsString(ClientConnectionInterface::class, $body['message']);
+
+        $this->expectException(NotFoundException::class);
+        $app->get(ClientConnectionInterface::class);
     }
 
     public function test_dispatch_uses_the_compiled_binding_plan_end_to_end(): void

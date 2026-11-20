@@ -60,13 +60,15 @@ $agent->addTool($mcpTools->select('find_orders', 'cancel_order'));
 
 `Kinetis\Neuron\AgentStream` streams an agent run to the browser in
 Neuron's Vercel AI SDK or AG-UI protocol, one flushed Server-Sent Event
-per protocol event, under FrankenPHP or PHP-FPM:
+per protocol event, under FrankenPHP or PHP-FPM. `$connection` is the
+request's `Kinetis\Runtime\ClientConnectionInterface`, injected into the
+controller:
 
 ```php
 $adapter = new VercelAIAdapter();
 $run = $agent->setStreamAdapter(static fn (): VercelAIAdapter => $adapter)->stream(new UserMessage($question));
 
-return new AgentStream($adapter)->response($run);
+return new AgentStream($adapter, $connection)->response($run);
 ```
 
 `Kinetis\Neuron\InferenceTelemetry` reports every provider call of an

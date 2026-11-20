@@ -7,6 +7,7 @@ namespace Kinetis\Tests\Runtime\Adapters;
 use Kinetis\Http\TrustedProxies;
 use Kinetis\Runtime\Adapters\FpmAdapter;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
+use Kinetis\Runtime\SapiClientConnection;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ServerRequestInterface;
@@ -27,6 +28,11 @@ final class FpmAdapterTest extends TestCase
     public function test_is_not_persistent(): void
     {
         self::assertFalse((new FpmAdapter(TrustedProxies::fromList([])))->isPersistent());
+    }
+
+    public function test_reads_the_client_connection_from_the_sapi(): void
+    {
+        self::assertInstanceOf(SapiClientConnection::class, (new FpmAdapter(TrustedProxies::fromList([])))->clientConnection());
     }
 
     /**

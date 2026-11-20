@@ -18,8 +18,11 @@ use Kinetis\Http\TrustedProxies;
 use Kinetis\Instrumentation\NullTelemetry;
 use Kinetis\Instrumentation\Telemetry;
 use Kinetis\Runtime\Adapters\FpmAdapter;
+use Kinetis\Runtime\ClientConnectionInterface;
 use Kinetis\Runtime\HttpStartup;
 use Kinetis\Runtime\RuntimeAdapterInterface;
+use Kinetis\Runtime\UnobservableClientConnection;
+use Kinetis\Tests\Http\Fixtures\GoneClientConnection;
 use Kinetis\Tests\Instrumentation\RecordingTelemetry;
 use Kinetis\Tests\Runtime\Fixtures\RecordingAdapter;
 use Kinetis\Tests\Runtime\Fixtures\StartupProject\Events\StartupEvent;
@@ -272,6 +275,17 @@ final class HttpStartupTest extends TestCase
         self::assertSame(0, $GLOBALS['kinetisGcCollectCyclesCallCount']);
     }
 
+    public function test_requests_read_the_client_connection_the_adapter_reports(): void
+    {
+        putenv('APP_ENV=development');
+
+        $response = HttpStartup::assemble($this->projectRoot, static fn (TrustedProxies $proxies): RecordingAdapter => new RecordingAdapter($proxies, connection: new GoneClientConnection()))
+            ->kernel
+            ->handle(new ServerRequest('GET', '/startup-connection'));
+
+        self::assertSame('"gone"', (string) $response->getBody());
+    }
+
     public function test_startup_detects_the_runtime_this_process_is_actually_running_in(): void
     {
         putenv('APP_ENV=development');
@@ -339,6 +353,12 @@ final class HttpStartupTest extends TestCase
             public function isPersistent(): bool
             {
                 return false;
+            }
+
+            #[\Override]
+            public function clientConnection(): ClientConnectionInterface
+            {
+                return new UnobservableClientConnection();
             }
         });
 

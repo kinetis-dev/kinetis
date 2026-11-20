@@ -65,6 +65,12 @@ parameters:
         -
             identifier: kinetis.sapiCall
             path: src/Runtime/SuperglobalsBridge.php
+        # SapiClientConnection is the one reader of the SAPI's connection
+        # status: FpmAdapter and FrankenPhpAdapter hand it to the Kernel as
+        # ClientConnectionInterface, and everything else asks that.
+        -
+            identifier: kinetis.sapiCall
+            path: src/Runtime/SapiClientConnection.php
         # The console entrypoint is a short-lived process that owns its own
         # exit code: commands return one, and this script hands it to exit.
         -

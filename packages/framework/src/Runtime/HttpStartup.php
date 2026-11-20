@@ -70,8 +70,8 @@ use Throwable;
  *    `RequestBodyMiddleware` bounds and parses it inside the Kernel
  *    under whatever `FormLimits` the container holds.
  * 7. The adapter is detected before the Kernel is constructed, so its
- *    `isPersistent()` is a constructor argument rather than something
- *    patched in afterwards.
+ *    `isPersistent()` and `clientConnection()` are constructor arguments
+ *    rather than something patched in afterwards.
  * 8. {@see OpenApiAccess} is decided from the booted container's
  *    `Config`, which a `bootstrap.php` may have replaced, and applied to
  *    the route table both branches of step 2 produce, so the Kernel
@@ -225,6 +225,7 @@ final class HttpStartup
                 $app,
                 OpenApiAccess::fromConfig($bootedConfig)->routes($router),
                 isPersistent: $adapter->isPersistent(),
+                clientConnection: $adapter->clientConnection(),
                 httpCache: $httpCache,
                 discoveredGlobalMiddleware: $globalMiddleware,
                 discoveredOpenApiMiddleware: $openApiMiddleware,

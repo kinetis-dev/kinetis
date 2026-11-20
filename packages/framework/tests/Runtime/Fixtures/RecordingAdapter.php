@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Kinetis\Tests\Runtime\Fixtures;
 
 use Kinetis\Http\TrustedProxies;
+use Kinetis\Runtime\ClientConnectionInterface;
 use Kinetis\Runtime\RuntimeAdapterInterface;
+use Kinetis\Runtime\UnobservableClientConnection;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -28,6 +30,7 @@ final class RecordingAdapter implements RuntimeAdapterInterface
         public readonly TrustedProxies $trustedProxies,
         private readonly bool $persistent = false,
         private readonly ?ServerRequestInterface $request = null,
+        private readonly ClientConnectionInterface $connection = new UnobservableClientConnection(),
     ) {}
 
     #[\Override]
@@ -42,5 +45,11 @@ final class RecordingAdapter implements RuntimeAdapterInterface
     public function isPersistent(): bool
     {
         return $this->persistent;
+    }
+
+    #[\Override]
+    public function clientConnection(): ClientConnectionInterface
+    {
+        return $this->connection;
     }
 }
