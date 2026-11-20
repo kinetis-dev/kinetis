@@ -8,9 +8,11 @@ use JsonException;
 use Kinetis\BrefAdapter\Exception\BrefAdapterException;
 use Kinetis\BrefAdapter\Exception\MalformedRequestBodyException;
 use Kinetis\Http\Responses\ErrorResponse;
+use Kinetis\Runtime\ClientConnectionInterface;
 use Kinetis\Runtime\Exception\RuntimeUnavailableException;
 use Kinetis\Runtime\RuntimeAdapterInterface;
 use Kinetis\Runtime\StreamableResponseInterface;
+use Kinetis\Runtime\UnobservableClientConnection;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -141,6 +143,16 @@ final class BrefLambdaAdapter implements RuntimeAdapterInterface
     public function isPersistent(): bool
     {
         return true;
+    }
+
+    /**
+     * Never reports the client gone: the Runtime API carries no client
+     * connection, and this adapter emits no stream.
+     */
+    #[\Override]
+    public function clientConnection(): ClientConnectionInterface
+    {
+        return new UnobservableClientConnection();
     }
 
     /**

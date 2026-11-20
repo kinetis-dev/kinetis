@@ -11,6 +11,7 @@ use Kinetis\Container\AppScope;
 use Kinetis\Container\RequestScope;
 use Kinetis\Http\StreamScopeLease;
 use Kinetis\Http\StreamedResponse;
+use Kinetis\Runtime\UnobservableClientConnection;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -32,6 +33,14 @@ final class BrefLambdaAdapterTest extends TestCase
     public function test_is_persistent(): void
     {
         self::assertTrue((new BrefLambdaAdapter('127.0.0.1:9001'))->isPersistent());
+    }
+
+    public function test_never_reports_the_client_gone(): void
+    {
+        $connection = (new BrefLambdaAdapter('127.0.0.1:9001'))->clientConnection();
+
+        self::assertInstanceOf(UnobservableClientConnection::class, $connection);
+        self::assertFalse($connection->isGone());
     }
 
     /**
