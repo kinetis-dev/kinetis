@@ -10,6 +10,7 @@ use Kinetis\Neuron\AgentStream;
 use Kinetis\Neuron\NeuronHttpClient;
 use Kinetis\RevoltHttpClient\AmpHttpClientFactory;
 use Kinetis\RevoltHttpClient\Http;
+use Kinetis\Runtime\ClientConnectionInterface;
 use NeuronAI\Agent\Adapters\AGUIAdapter;
 use NeuronAI\Agent\Adapters\VercelAIAdapter;
 use NeuronAI\Agent\Agent;
@@ -93,7 +94,7 @@ final class AgentStreamTest extends TestCase
         $events = [];
         $run = self::tap($this->agent('stub-model', $adapter)->stream(new UserMessage('ping')), $events);
 
-        $response = new AgentStream($adapter)->response($run);
+        $response = new AgentStream($adapter, self::connection(gone: false))->response($run);
 
         self::assertSame(200, $response->getStatusCode());
 
@@ -116,7 +117,7 @@ final class AgentStreamTest extends TestCase
         $events = [];
         $run = self::tap($this->agent('stub-model', $adapter)->stream(new UserMessage('ping')), $events);
 
-        $response = new AgentStream($adapter)->response($run);
+        $response = new AgentStream($adapter, self::connection(gone: false))->response($run);
 
         self::assertSame(['text/event-stream'], $response->getHeader('Content-Type'));
         $flushes = self::emit($response->getEmitter());
@@ -132,7 +133,7 @@ final class AgentStreamTest extends TestCase
         $flushes = [];
 
         $failure = self::failure(static function () use ($adapter, $run, &$flushes): void {
-            self::emit(new AgentStream($adapter)->response($run)->getEmitter(), $flushes);
+            self::emit(new AgentStream($adapter, self::connection(gone: false))->response($run)->getEmitter(), $flushes);
         });
 
         self::assertInstanceOf(ProviderException::class, $failure);
@@ -152,7 +153,7 @@ final class AgentStreamTest extends TestCase
         $flushes = [];
 
         $failure = self::failure(static function () use ($adapter, $run, &$flushes): void {
-            self::emit(new AgentStream($adapter)->response($run)->getEmitter(), $flushes);
+            self::emit(new AgentStream($adapter, self::connection(gone: false))->response($run)->getEmitter(), $flushes);
         });
 
         self::assertInstanceOf(RuntimeException::class, $failure);
@@ -160,6 +161,28 @@ final class AgentStreamTest extends TestCase
         self::assertSame(SSEEncoder::frame(new ProtocolEvent('text-end', ['id' => self::decode($flushes[1])['id']])), $flushes[3]);
         self::assertSame(self::errorFrame(), $flushes[4]);
         self::assertCount(5, $flushes);
+    }
+
+    /**
+     * The same failure once the runtime has seen the client leave: nothing
+     * is written after it, and the emitter returns.
+     */
+    public function test_a_failure_after_the_client_left_writes_nothing_more_and_returns(): void
+    {
+        $adapter = new VercelAIAdapter();
+        $run = (static function () use ($adapter): Generator {
+            yield from $adapter->transform(new TextChunk('msg_1', 'Hel'));
+
+            throw new RuntimeException('not framed');
+        })();
+
+        $flushes = self::emit(new AgentStream($adapter, self::connection(gone: true))->response($run)->getEmitter());
+
+        self::assertCount(3, $flushes);
+        self::assertSame(['start', 'text-start', 'text-delta'], array_map(
+            static fn (string $frame): string => self::decode($frame)['type'],
+            $flushes,
+        ));
     }
 
     public function test_a_stop_ends_the_answer_and_cancels_the_provider_connection(): void
@@ -172,7 +195,7 @@ final class AgentStreamTest extends TestCase
         });
         $run = $this->agent('until-abort', $adapter, $client, ['mark' => $mark])->stream(new UserMessage('ping'));
 
-        self::emit(new AgentStream($adapter)->response($run)->getEmitter(), $flushes);
+        self::emit(new AgentStream($adapter, self::connection(gone: false))->response($run)->getEmitter(), $flushes);
 
         // start, text-start, two deltas: the stop is asked before the next event is read.
         self::assertSame(['start', 'text-start', 'text-delta', 'text-delta', 'text-end', 'finish'], array_map(
@@ -275,6 +298,19 @@ final class AgentStreamTest extends TestCase
         }
 
         return $run->getReturn();
+    }
+
+    private static function connection(bool $gone): ClientConnectionInterface
+    {
+        return new readonly class ($gone) implements ClientConnectionInterface {
+            public function __construct(private bool $gone) {}
+
+            #[\Override]
+            public function isGone(): bool
+            {
+                return $this->gone;
+            }
+        };
     }
 
     private static function failure(Closure $call): Throwable
