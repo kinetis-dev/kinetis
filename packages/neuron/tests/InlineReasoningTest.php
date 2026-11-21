@@ -38,88 +38,88 @@ final class InlineReasoningTest extends TestCase
     #[DataProvider('answers')]
     public function testAnAnswerInOneChunk(string $streamed, string $visible, string $reasoning): void
     {
-        $filter = new InlineReasoning();
+        $parser = new InlineReasoning();
 
-        self::assertSame($visible, $filter->feed($streamed) . $filter->finish());
-        self::assertSame($reasoning, $filter->reasoning());
-        self::assertSame('', $filter->reasoning(), 'reasoning() hands it over once');
+        self::assertSame($visible, $parser->feed($streamed) . $parser->finish());
+        self::assertSame($reasoning, $parser->reasoning());
+        self::assertSame('', $parser->reasoning(), 'reasoning() hands it over once');
     }
 
     #[DataProvider('answers')]
     public function testAnAnswerSplitInTwoAtEveryPosition(string $streamed, string $visible, string $reasoning): void
     {
         for ($at = 0; $at <= strlen($streamed); ++$at) {
-            $filter = new InlineReasoning();
+            $parser = new InlineReasoning();
 
-            $out = $filter->feed(substr($streamed, 0, $at)) . $filter->feed(substr($streamed, $at)) . $filter->finish();
+            $out = $parser->feed(substr($streamed, 0, $at)) . $parser->feed(substr($streamed, $at)) . $parser->finish();
 
             self::assertSame($visible, $out, "split at {$at}");
-            self::assertSame($reasoning, $filter->reasoning(), "split at {$at}");
+            self::assertSame($reasoning, $parser->reasoning(), "split at {$at}");
         }
     }
 
     #[DataProvider('answers')]
     public function testAnAnswerStreamedAByteAtATime(string $streamed, string $visible, string $reasoning): void
     {
-        $filter = new InlineReasoning();
+        $parser = new InlineReasoning();
         $out = '';
         $taken = '';
 
         foreach (str_split($streamed) as $byte) {
-            $out .= $filter->feed($byte);
-            $taken .= $filter->reasoning();
+            $out .= $parser->feed($byte);
+            $taken .= $parser->reasoning();
         }
 
-        self::assertSame($visible, $out . $filter->finish());
-        self::assertSame($reasoning, $taken . $filter->reasoning());
+        self::assertSame($visible, $out . $parser->finish());
+        self::assertSame($reasoning, $taken . $parser->reasoning());
     }
 
     public function testWhatCouldStillBeATagIsHeldBackOnlyUntilItCannotBe(): void
     {
-        $filter = new InlineReasoning();
+        $parser = new InlineReasoning();
 
-        self::assertSame('a ', $filter->feed('a <'));
-        self::assertSame('<b', $filter->feed('b'), '`<b` is no tag');
-        self::assertSame(' ', $filter->feed(' <thin'));
-        self::assertSame('<thin ice', $filter->feed(' ice'));
-        self::assertSame(' ', $filter->feed(' <th'));
-        self::assertSame('<th', $filter->finish(), 'the end of the stream is no tag');
-        self::assertSame('', $filter->reasoning());
+        self::assertSame('a ', $parser->feed('a <'));
+        self::assertSame('<b', $parser->feed('b'), '`<b` is no tag');
+        self::assertSame(' ', $parser->feed(' <thin'));
+        self::assertSame('<thin ice', $parser->feed(' ice'));
+        self::assertSame(' ', $parser->feed(' <th'));
+        self::assertSame('<th', $parser->finish(), 'the end of the stream is no tag');
+        self::assertSame('', $parser->reasoning());
     }
 
     public function testABlockClosedInTheNextChunkTakesOutWhatCameBetween(): void
     {
-        $filter = new InlineReasoning();
+        $parser = new InlineReasoning();
 
-        self::assertSame('', $filter->feed('<thi'));
-        self::assertSame('', $filter->feed('nking>I should '));
-        self::assertSame('I should ', $filter->reasoning());
-        self::assertSame('', $filter->feed('check.</thin'));
-        self::assertSame('Here', $filter->feed('king>Here'));
-        self::assertSame('check.', $filter->reasoning());
-        self::assertSame(' it is.', $filter->feed(' it is.'));
+        self::assertSame('', $parser->feed('<thi'));
+        self::assertSame('', $parser->feed('nking>I should '));
+        self::assertSame('I should ', $parser->reasoning());
+        self::assertSame('', $parser->feed('check.</thin'));
+        self::assertSame('Here', $parser->feed('king>Here'));
+        self::assertSame('check.', $parser->reasoning());
+        self::assertSame(' it is.', $parser->feed(' it is.'));
     }
 
     public function testEachTextPartEndsItsOwnBlockButTheAnswerStartsOnce(): void
     {
-        $filter = new InlineReasoning();
+        $parser = new InlineReasoning();
 
         // a step that only reasons before calling a tool, its block left open
-        self::assertSame('', $filter->feed("<thinking>Query them.\n"));
-        self::assertSame('', $filter->finish());
-        self::assertSame("Query them.\n", $filter->reasoning());
+        self::assertSame('', $parser->feed("<thinking>Query them.\n"));
+        self::assertSame('', $parser->finish());
+        self::assertSame("Query them.\n", $parser->reasoning());
 
         // the next step's text is outside any block, its leading blank line still dropped
-        self::assertSame('Low: products#3.', $filter->feed("\nLow: products#3."));
-        self::assertSame('', $filter->finish());
+        self::assertSame('Low: products#3.', $parser->feed("\nLow: products#3."));
+        self::assertSame('', $parser->finish());
     }
 
     public function testLeadingWhitespaceIsHeldWithinAPartAndReleasedAtItsEnd(): void
     {
-        $filter = new InlineReasoning();
+        $parser = new InlineReasoning();
 
-        self::assertSame('', $filter->feed("\n"), 'a block may still follow it');
-        self::assertSame("\n", $filter->finish(), 'none did, so it is the model\'s own text');
-        self::assertSame('Answer.', $filter->feed('Answer.'), 'released once, not again with the next text');
+        self::assertSame('', $parser->feed("\n"), 'a block may still follow it');
+        self::assertSame("\n", $parser->finish(), 'none did, so it is the model\'s own text');
+        self::assertSame('Answer.', $parser->feed('Answer.'), 'released once, not again with the next text');
     }
 }
