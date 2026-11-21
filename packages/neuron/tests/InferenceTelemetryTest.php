@@ -11,6 +11,7 @@ use Kinetis\Instrumentation\TelemetryInterface;
 use Kinetis\Mcp\McpRegistry;
 use Kinetis\Neuron\Bedrock\BedrockProvider;
 use Kinetis\Neuron\InferenceTelemetry;
+use Kinetis\Neuron\InlineReasoningProvider;
 use Kinetis\Neuron\McpTools;
 use Kinetis\Neuron\NeuronHttpClient;
 use Kinetis\Neuron\Tests\Fixtures\Bedrock\RecordingBedrock;
@@ -168,6 +169,22 @@ final class InferenceTelemetryTest extends TestCase
         $failure = self::failure(static function () use ($bedrock): void {
             InferenceTelemetry::observe(Agent::make())
                 ->setAiProvider(new BedrockProvider($bedrock->client(), 'amazon.nova-lite-v1:0'))
+                ->setThreadId('thread-1')
+                ->chat(new UserMessage('ping'));
+        });
+
+        self::assertInstanceOf(ProviderException::class, $failure);
+        self::assertSame(['inferenceStarted', ['aws.bedrock', 'amazon.nova-lite-v1:0', 1]], $this->calls[0]);
+    }
+
+    public function test_a_provider_behind_inline_reasoning_is_named_by_the_provider_it_wraps(): void
+    {
+        $bedrock = new RecordingBedrock(RecordingBedrock::json(['message' => 'Throttled'], 429));
+        $provider = new InlineReasoningProvider(new BedrockProvider($bedrock->client(), 'amazon.nova-lite-v1:0'));
+
+        $failure = self::failure(static function () use ($provider): void {
+            InferenceTelemetry::observe(Agent::make())
+                ->setAiProvider($provider)
                 ->setThreadId('thread-1')
                 ->chat(new UserMessage('ping'));
         });

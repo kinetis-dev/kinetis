@@ -23,7 +23,9 @@ final class InlineReasoningTest extends TestCase
         yield 'only whitespace' => ["\n  ", "\n  ", ''];
         yield 'only whitespace after a block' => ["<think>Plan.</think>\n  ", '', 'Plan.'];
         yield 'blank lines after a block mid-answer' => ["A.<thinking>x</thinking>\n\nB.", "A.\n\nB.", 'x'];
+        yield 'two blocks before the answer' => ["<think>a</think>\n<thinking>b</thinking>\n Answer.", 'Answer.', 'ab'];
         yield 'a block left open' => ['Answer. <thinking>And then I', 'Answer. ', 'And then I'];
+        yield 'a block left open on part of its closing tag' => ['Answer. <think>Plan.</thi', 'Answer. ', 'Plan.</thi'];
         yield 'only reasoning' => ['<think>Nothing to say.</think>', '', 'Nothing to say.'];
         yield 'a comparison' => ['a < b and c<d', 'a < b and c<d', ''];
         yield 'html' => ['<b>bold</b> <thin ice> <thinkpad> <th', '<b>bold</b> <thin ice> <thinkpad> <th', ''];
