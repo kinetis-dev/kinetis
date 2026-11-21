@@ -129,6 +129,19 @@ $bedrock = new SigV4SigningClient(
 $provider = new BedrockProvider($bedrock, 'anthropic.claude-3-haiku-20240307-v1:0');
 ```
 
+Some models write their reasoning into the answer's text, between
+`<thinking>` and `</thinking>` (Amazon Nova, Claude 3) or `<think>` and
+`</think>` (DeepSeek R1, Qwen3, QwQ). Wrap the provider of such a model
+in `Kinetis\Neuron\InlineReasoningProvider`: the stream carries that text
+as `ReasoningChunk`, and the answer and the chat history keep none of it
+([guide](https://kinetis.dev/docs/neuron.html#neuron-inline-reasoning)):
+
+```php
+use Kinetis\Neuron\InlineReasoningProvider;
+
+$agent = Agent::make()->setAiProvider(new InlineReasoningProvider($provider));
+```
+
 `Kinetis\Neuron\Linting\NoWorkerUnsafeNeuronRule` is a PHPStan rule that
 reports the Neuron features unsafe in a persistent worker: a provider,
 tool, connector, vector store or embeddings provider built without an

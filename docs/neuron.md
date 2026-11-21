@@ -626,7 +626,9 @@ carrying the provider, the model and the token usage
   `gen_ai.system` names: `OpenAI` to `openai`, `Anthropic` to
   `anthropic`, `Gemini` to `gcp.gemini`, `BedrockProvider` to
   `aws.bedrock`, and so on. A subclass such as
-  `OpenAILike` can reach any service and reports `_OTHER`.
+  `OpenAILike` can reach any service and reports `_OTHER`. An
+  `InlineReasoningProvider` ({ref}`neuron-inline-reasoning`) reports the
+  provider it wraps.
 
 (neuron-call-fails)=
 
@@ -796,6 +798,67 @@ Every failure is a `NeuronAI\Exceptions\ProviderException`:
   with a fixed message.
 
 No message holds the request or a credential.
+
+(neuron-inline-reasoning)=
+
+## Reasoning written in the answer
+
+Some models write their reasoning into the answer's text instead of a
+reasoning block: `<thinking>…</thinking>` from Amazon Nova and Claude 3
+and Claude Haiku models on Bedrock, `<think>…</think>` from DeepSeek R1,
+Qwen3 and QwQ, usually through OpenAI-compatible or Ollama endpoints.
+Neuron fills `ReasoningChunk` and `ReasoningContent` only from a
+reasoning block, so this text streams as answer, is stored in the chat
+history, and is sent back to the model on the next turn. The format
+depends on the model, not on the provider class. For a model that
+writes it, wrap the provider in `Kinetis\Neuron\InlineReasoningProvider`,
+here with `BedrockProviders` ({ref}`neuron-bedrock`) injected as
+`$providers`:
+
+```{code-block} php
+use Kinetis\Neuron\InlineReasoningProvider;
+
+$agent = Agent::make()
+    ->setAiProvider(new InlineReasoningProvider($this->providers->claude()))
+    ->setThreadId($conversationId);
+```
+
+- **What is reasoning.** Text between `<thinking>` and `</thinking>`, or
+  `<think>` and `</think>`, in any letter case and without attributes. A
+  block ends only at its own closing tag; one the answer leaves open is
+  reasoning to the end of its text. Anything else that starts with `<`,
+  such as `a < b`, `<b>` or `<thin ice>`, is answer text. Whitespace a
+  block leaves at the start of the answer is dropped.
+- **The stream.** Each `TextChunk` comes out as its visible text, and
+  the reasoning taken out of it as a `ReasoningChunk` with the same
+  message id, before that text. `VercelAIAdapter` and `AGUIAdapter` send
+  it as reasoning ({ref}`neuron-browser-stream`). A tag may be split
+  across chunks at any byte, so the end of a chunk that could still
+  begin one waits for the next chunk, or for the next chunk of another
+  type, such as a tool call, or for the end of the stream. Every other
+  chunk passes through unchanged and in order.
+- **The answer.** The message `chat()`, `stream()` and `structured()`
+  return has the reasoning taken out of its text blocks, so the chat
+  history stores the answer only; a text block holding nothing else is
+  removed. The reasoning is not stored as `ReasoningContent`, since a
+  provider's message mapper would send it back as a reasoning block the
+  model never produced. `structured()` output is parsed from the text
+  without the reasoning.
+- **Everything else is the wrapped provider's.** The model, usage,
+  stop reason and metadata are unchanged, and `systemPrompt()`,
+  `setTools()` and `setHttpClient()` configure the wrapped provider.
+- **Untagged text is unchanged.** A model that writes no tags gets the
+  same text, chunk by chunk, except that the end of a chunk that could
+  begin a tag, and whitespace at the start of the answer, wait as
+  described above.
+- **Scope.** The wrapper holds the provider, and each call parses with
+  its own state. Build the wrapper in the request with the provider
+  ({ref}`neuron-scope-request`).
+
+`Kinetis\Neuron\InlineReasoning` is the parser behind it, for answer
+text that does not come through a provider: `feed()` each delta in
+order and show what it returns, call `finish()` at the end of each text
+part, and take `reasoning()` as it accumulates. Use one per answer.
 
 (neuron-not-in-worker)=
 

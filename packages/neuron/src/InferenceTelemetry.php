@@ -137,10 +137,14 @@ final class InferenceTelemetry
     /**
      * The provider in OpenTelemetry's `gen_ai.system` vocabulary, matched
      * on the exact class: a subclass, such as `OpenAILike`, may reach any
-     * service.
+     * service. An `InlineReasoningProvider` is named by the provider it wraps.
      */
     private static function system(AIProviderInterface $provider): string
     {
+        if ($provider instanceof InlineReasoningProvider) {
+            return self::system($provider->provider());
+        }
+
         return match ($provider::class) {
             OpenAI::class, OpenAIResponses::class => 'openai',
             AzureOpenAI::class => 'az.ai.openai',
