@@ -112,6 +112,16 @@ final class TestApplicationCommandTest extends TestCase
         self::assertSame('', $result->errorOutput);
     }
 
+    public function test_a_help_flag_returns_the_commands_help_without_running_it(): void
+    {
+        $result = $this->application->command('fixture:greet', ['Ada', '-h']);
+
+        self::assertSame(0, $result->exitCode);
+        self::assertSame("Usage:\n  kinetis fixture:greet [arguments]\n", $result->output);
+        self::assertSame('', $result->errorOutput);
+        self::assertNull($result->exception);
+    }
+
     public function test_an_unknown_command_name_is_refused(): void
     {
         $this->expectException(InvalidArgumentException::class);

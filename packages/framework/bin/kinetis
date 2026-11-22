@@ -12,6 +12,7 @@ use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Console\CommandDiscovery;
+use Kinetis\Console\CommandHelp;
 use Kinetis\Console\CommandRunner;
 use Kinetis\Console\Output;
 use Kinetis\Container\AppScope;
@@ -88,36 +89,36 @@ if ($env->isProduction()) {
 }
 
 $commandName = $argv[1] ?? null;
+$arguments = array_slice($argv ?? [], 2);
 $definition = $commandName !== null ? $registry->findCommand($commandName) : null;
 
 if ($definition === null) {
+    // `help` counts as a request for help only while no discovered
+    // command claims that name.
+    if (in_array($commandName, ['--help', '-h', 'help'], true)) {
+        fwrite(STDOUT, CommandHelp::forConsole($registry->commands()));
+
+        exit(0);
+    }
+
     if ($commandName === null) {
         fwrite(STDERR, "Usage: kinetis <command>\n\n");
     } else {
         fwrite(STDERR, "Unknown command \"{$commandName}\".\n\n");
     }
 
-    fwrite(STDERR, "Available commands:\n");
-
-    $commands = $registry->commands();
-
-    // Width of the name column, so the descriptions line up whatever
-    // commands the installed packages and the application contribute.
-    $width = 0;
-
-    foreach ($commands as $command) {
-        $width = max($width, strlen($command->name));
-    }
-
-    foreach ($commands as $command) {
-        $line = '  ' . ($command->description === ''
-            ? $command->name
-            : str_pad($command->name, $width) . '   ' . $command->description);
-
-        fwrite(STDERR, $line . "\n");
-    }
+    fwrite(STDERR, CommandHelp::commandList($registry->commands()));
 
     exit(1);
+}
+
+// Answered from the discovered definition alone: no configuration,
+// bootstrap, listener, or command runs, so help works without the
+// credentials the command itself would need.
+if (CommandHelp::requested($arguments)) {
+    fwrite(STDOUT, CommandHelp::forCommand($definition));
+
+    exit(0);
 }
 
 $app = new AppScope();
@@ -153,7 +154,7 @@ $app->boot();
 // shared with TestApplication::command() — see its own docblock.
 $exitCode = new CommandRunner($app)->run(
     $definition,
-    array_slice($argv ?? [], 2),
+    $arguments,
     Output::forStreams(STDOUT, STDERR),
 );
 
