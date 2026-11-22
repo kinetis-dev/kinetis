@@ -451,19 +451,29 @@ $agent->addTool($connector->tools());
 MCP session: it sends `initialize` and the `initialized` notification,
 and keeps the session, its ID if the server issues one, and the
 connector's `token` and `headers` for as long as the connector lives.
-Every `tools()` call sends `tools/list`. Neuron never ends a session it
-opened: a server that issues session IDs keeps each one until it expires
-it.
+Every `tools()` call sends `tools/list`. Each tool it returns holds the
+connector, so the connector lives until it and all of its tools are
+released.
+
+When the connector is released, Neuron ends a session the server gave an
+ID: it sends `DELETE` to `url` with the session ID, `token` and
+`headers`, through the same `NeuronHttpClient`, with a 2-second
+deadline. The release waits for the answer, suspending only the fiber
+that releases the connector, and ignores any failure: a server that
+answers `405`, does not answer in time or is unreachable keeps the
+session until it expires it. A server that issues no session ID, such
+as a Kinetis `/mcp` route ({doc}`appendix-mcp`, "Streamable HTTP"),
+receives no `DELETE`.
 
 | Connector | Each request sends | Every request uses |
 |---|---|---|
-| Built in the request | `initialize`, `tools/list` | Its own session and credentials; the server keeps one session per request until it expires them |
-| Registered in the application scope | `tools/list` | The connector's session and one set of credentials for the whole worker |
+| Built in the request | `initialize`, `tools/list`, and `DELETE` when the request releases it | Its own session and credentials, ended by the end of the request; the request takes up to 2 seconds longer when the server does not answer the `DELETE` |
+| Registered in the application scope | `tools/list` | The connector's session and one set of credentials for the whole worker; the session ends with `DELETE` when the worker exits normally |
 
 Two requests that make the first `tools()` call of an application-scoped
 connector concurrently each open a session; the connector keeps the one
-opened last. Call `tools()` once when the worker starts to open its
-single session before requests arrive.
+opened last and ends the other. Call `tools()` once when the worker
+starts to open its single session before requests arrive.
 
 Register a connector in the application scope only when its credentials
 are the application's own service credentials, which every request may
