@@ -273,9 +273,19 @@ final class NoWorkerUnsafeNeuronRule implements Rule
             return null;
         }
 
+        // A constructor declared in PHP code has exactly one variant. Only a
+        // built-in constructor described by PHPStan's signature map, such as
+        // ReflectionMethod's, has several, and getOnlyVariant() throws for
+        // it. No built-in constructor takes an HttpClientInterface.
+        $variants = $reflection->getConstructor()->getVariants();
+
+        if (\count($variants) !== 1) {
+            return null;
+        }
+
         $client = new ObjectType(self::CLIENT_INTERFACE);
 
-        foreach ($reflection->getConstructor()->getOnlyVariant()->getParameters() as $position => $parameter) {
+        foreach ($variants[0]->getParameters() as $position => $parameter) {
             $type = $parameter->getType();
 
             if (!TypeCombinator::containsNull($type) || !$client->isSuperTypeOf(TypeCombinator::removeNull($type))->yes()) {
