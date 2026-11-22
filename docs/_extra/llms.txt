@@ -6,7 +6,7 @@
 > request-scoped container; Fiber-based concurrency over Revolt; a native
 > Model Context Protocol server.
 
-Kinetis core ships as `kinetis/framework`, requiring PHP 8.4 or later.
+Kinetis core ships as `kinetis/framework`, requiring PHP 8.4 or 8.5.
 Optional capabilities ship as separate packages. Reference pages hold
 exact contracts and internal workings behind the guides.
 

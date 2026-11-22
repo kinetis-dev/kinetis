@@ -641,6 +641,14 @@ final class GitUnavailable extends RuntimeException
  */
 function run(string $workingDirectory, array $command, array $environment = []): array
 {
+    /**
+     * $command is an argument vector, so proc_open starts it without a
+     * shell, and its arguments come from the operator running the tool.
+     * Psalm suppresses a taint issue only through TaintedInput, for this
+     * statement alone.
+     *
+     * @psalm-suppress TaintedInput
+     */
     $process = proc_open(
         $command,
         [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],

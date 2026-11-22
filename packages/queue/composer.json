@@ -9,7 +9,7 @@
         }
     ],
     "require": {
-        "php": "^8.4",
+        "php": ">=8.4 <8.6",
         "kinetis/framework": "dev-main",
         "psr/container": "^2.0.2",
         "psr/log": "^3.0.2",

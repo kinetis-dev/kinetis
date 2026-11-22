@@ -95,7 +95,7 @@ Full reference across every package:
 composer require kinetis/cache-redis
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and
 [`kinetis/redis`](https://github.com/kinetis-dev/redis). Full documentation:
 [kinetis.dev/docs/redis.html](https://kinetis.dev/docs/redis.html)
 (this runtime cache, its configuration, and the transport underneath).

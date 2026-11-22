@@ -442,6 +442,7 @@ function buildPlan(array $manifest, ?array $oldManifest, callable $refsFor, call
 
 /**
  * @param list<string> $argv
+ * @psalm-cli-only
  */
 function planMain(array $argv = []): int
 {
@@ -490,6 +491,6 @@ function planMain(array $argv = []): int
 }
 
 // See generate-composer.php for the entry-point guard.
-if (current(get_included_files()) === __FILE__) {
+if (PHP_SAPI === 'cli' && current(get_included_files()) === __FILE__) {
     exit(planMain($argv ?? []));
 }

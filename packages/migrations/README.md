@@ -131,7 +131,7 @@ Full reference across every package:
 composer require kinetis/migrations
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
 [`kinetis/persistence`](https://github.com/kinetis-dev/persistence), and
 [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge).
 The `migrate*` commands always hold one PDO session for their advisory

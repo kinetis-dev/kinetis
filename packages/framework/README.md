@@ -98,7 +98,7 @@ framework itself.
 composer require kinetis/framework
 ```
 
-Requires PHP 8.4 or later. See the [Tutorial](https://kinetis.dev/docs/tutorial.html)
+Requires PHP 8.4 or 8.5. See the [Tutorial](https://kinetis.dev/docs/tutorial.html)
 for a complete walkthrough, including running under FrankenPHP.
 
 ## Configuration

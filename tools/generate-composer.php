@@ -610,7 +610,10 @@ function runRelease(array $manifest, string $keysArg): int
     return 0;
 }
 
-/** @param list<string> $argv */
+/**
+ * @param list<string> $argv
+ * @psalm-cli-only
+ */
 function generatorMain(array $argv): int
 {
     $parsed = parseGeneratorArguments(array_slice($argv, 1));
@@ -637,6 +640,6 @@ function generatorMain(array $argv): int
 // get_included_files()[0] is the entry-point script whether or not $argv
 // is populated, which realpath($argv[0]) is not: PHPUnit's own CLI
 // invocation leaves $argv unset.
-if (current(get_included_files()) === __FILE__) {
+if (PHP_SAPI === 'cli' && current(get_included_files()) === __FILE__) {
     exit(generatorMain($argv ?? []));
 }

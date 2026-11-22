@@ -55,7 +55,7 @@ by default and needs its `/var/runtime/bootstrap` replaced — see
 composer require kinetis/bref-adapter
 ```
 
-Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework). See
+Requires PHP 8.4 or 8.5 and [`kinetis/framework`](https://github.com/kinetis-dev/framework). See
 [Runtime Adapters](https://kinetis.dev/docs/runtime-adapters.html) for how
 runtime detection works, what changes under Lambda specifically, the
 form-body contract's own numbers, and exactly which event fields are

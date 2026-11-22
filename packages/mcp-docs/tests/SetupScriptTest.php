@@ -98,7 +98,7 @@ final class SetupScriptTest extends TestCase
                 info) exit 0 ;;
             esac
 
-            while [ $# -gt 0 ] && [ "$1" != composer:2 ]; do shift; done
+            while [ $# -gt 0 ] && [ "$1" != composer:2.11 ]; do shift; done
             [ $# -gt 0 ] || exit 1
             shift
 
@@ -179,7 +179,7 @@ final class SetupScriptTest extends TestCase
         self::assertCount(2, $containers);
         self::assertStringStartsWith('sh -c ', $containers[0]);
         self::assertSame('sh ' . self::LAUNCHER, $containers[1]);
-        self::assertStringEndsWith('composer:2 ' . $containers[1], $this->registeredCommand());
+        self::assertStringEndsWith('composer:2.11 ' . $containers[1], $this->registeredCommand());
         self::assertContains(self::SERVER_LINE, $this->events());
     }
 

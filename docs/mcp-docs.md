@@ -40,7 +40,7 @@ The script needs:
 - network access to Docker Hub, Packagist and GitHub.
 
 It needs no PHP, Composer or `sudo`: the install and the server both run
-in the `composer:2` image as your own user.
+in the `composer:2.11` image as your own user.
 
 The script installs the package into `~/.kinetis-mcp-docs`, checks that
 the server answers through the exact command it registers, and
@@ -56,7 +56,7 @@ update lifecycle.
 
 ## Running it directly
 
-Install the package with Composer, on PHP 8.4 or later:
+Install the package with Composer, on PHP 8.4 or 8.5:
 
 ```{code-block} sh
 composer require kinetis/mcp-docs

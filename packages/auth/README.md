@@ -63,7 +63,7 @@ Need stateless JWT verification instead of your own token storage? See
 composer require kinetis/auth
 ```
 
-Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework). Full documentation:
+Requires PHP 8.4 or 8.5 and [`kinetis/framework`](https://github.com/kinetis-dev/framework). Full documentation:
 [kinetis.dev/docs/auth.html](https://kinetis.dev/docs/auth.html).
 
 ## License

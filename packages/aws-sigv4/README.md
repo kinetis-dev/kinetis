@@ -77,7 +77,7 @@ expire, and a lookup that resolves nothing holds nothing.
 composer require kinetis/aws-sigv4
 ```
 
-Requires PHP 8.4+ and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation,
+Requires PHP 8.4 or 8.5 and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation,
 including the origin grammar, deadlines, failure behavior, and what is
 buffered or blocking:
 [kinetis.dev/docs/aws-sigv4.html](https://kinetis.dev/docs/aws-sigv4.html).

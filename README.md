@@ -12,7 +12,7 @@
   <a href="https://github.com/kinetis-dev/kinetis/actions/workflows/infection.yml"><img src="https://github.com/kinetis-dev/kinetis/actions/workflows/infection.yml/badge.svg" alt="Infection"></a>
   <a href="https://sonarcloud.io/summary/overall?id=kinetis-dev_kinetis"><img src="https://sonarcloud.io/api/project_badges/measure?project=kinetis-dev_kinetis&metric=alert_status" alt="Quality Gate"></a>
   <a href="https://sonarcloud.io/summary/overall?id=kinetis-dev_kinetis"><img src="https://sonarcloud.io/api/project_badges/measure?project=kinetis-dev_kinetis&metric=coverage" alt="Coverage"></a>
-  <a href="https://www.php.net/"><img src="https://img.shields.io/badge/php-%E2%89%A58.4-777BB4" alt="PHP 8.4+"></a>
+  <a href="https://www.php.net/"><img src="https://img.shields.io/badge/php-8.4%20%7C%208.5-777BB4" alt="PHP 8.4 and 8.5"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 

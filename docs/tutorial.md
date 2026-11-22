@@ -33,7 +33,7 @@ a row.
 
 ## Requirements
 
-- PHP 8.4 or later
+- PHP 8.4 or 8.5
 - [Composer](https://getcomposer.org)
 - Docker, with Compose
 
@@ -41,9 +41,9 @@ a row.
 **PHP version support policy.** Kinetis targets PHP's own currently
 *actively supported* minor versions — those still receiving both bug and
 security fixes upstream, not the older security-only tail. Today that is
-PHP 8.4 and 8.5, tracked by every package's `composer.json` floor and by
+PHP 8.4 and 8.5, tracked by every package's `composer.json` PHP range and by
 the CI matrix (see {doc}`appendix-ci`). As new minors enter active
-support and older ones age out, Kinetis's floor and CI move with them:
+support and older ones age out, Kinetis's PHP range and CI move with them:
 this is a policy of following PHP's own release lifecycle, not a
 commitment to 8.4/8.5 specifically.
 ```
@@ -178,7 +178,7 @@ RUN apk add --no-cache unzip \
     && docker-php-ext-install pcntl \
     && apk del .build-deps
 
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2.11 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 

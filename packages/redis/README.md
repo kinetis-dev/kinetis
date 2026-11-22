@@ -83,7 +83,7 @@ topology watching, cross-slot aggregation, or retry classification. Use
 composer require kinetis/redis
 ```
 
-Requires PHP 8.4+. Full documentation:
+Requires PHP 8.4 or 8.5. Full documentation:
 [kinetis.dev/docs/redis.html](https://kinetis.dev/docs/redis.html).
 
 ## License

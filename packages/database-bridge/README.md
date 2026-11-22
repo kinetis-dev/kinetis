@@ -158,7 +158,7 @@ name inserts after the first segment: `DB_HOST` + `reporting` →
 composer require kinetis/database-bridge
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
 and [`kinetis/persistence`](https://github.com/kinetis-dev/persistence),
 plus the extension for the driver you use: `ext-mysqli`, `ext-pgsql`
 (with `ext-sockets`), `ext-pdo_mysql` or `ext-pdo_pgsql`. Full

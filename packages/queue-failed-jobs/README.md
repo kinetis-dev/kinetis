@@ -96,7 +96,7 @@ twice, within the queue's at-least-once contract. See
 composer require kinetis/queue-failed-jobs
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), [`kinetis/queue`](https://github.com/kinetis-dev/queue),
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework), [`kinetis/queue`](https://github.com/kinetis-dev/queue),
 [`kinetis/persistence`](https://github.com/kinetis-dev/persistence), and
 [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge). Full documentation:
 [kinetis.dev/docs/queue-failed-jobs.html](https://kinetis.dev/docs/queue-failed-jobs.html).

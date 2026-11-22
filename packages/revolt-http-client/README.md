@@ -149,7 +149,7 @@ other library that accepts an injectable `HttpClientInterface`.
 composer require kinetis/revolt-http-client
 ```
 
-Requires PHP 8.4+ (the floor `symfony/http-client:^8.0` itself requires).
+Requires PHP 8.4 or 8.5 (8.4 is the floor `symfony/http-client:^8.0` itself requires).
 Full documentation:
 [kinetis.dev/docs/revolt-http-client.html](https://kinetis.dev/docs/revolt-http-client.html).
 

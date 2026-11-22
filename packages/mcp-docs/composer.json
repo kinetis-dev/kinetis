@@ -9,7 +9,7 @@
         }
     ],
     "require": {
-        "php": "^8.4",
+        "php": ">=8.4 <8.6",
         "kinetis/mcp-protocol": "dev-main",
         "symfony/http-client": "^8.1.11",
         "symfony/http-client-contracts": "^3.7.1"

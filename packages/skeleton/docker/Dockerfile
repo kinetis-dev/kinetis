@@ -3,7 +3,7 @@ FROM php:8.4.27-fpm-alpine
 # unzip is needed by Composer to extract downloaded packages.
 RUN apk add --no-cache unzip
 
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2.11 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 

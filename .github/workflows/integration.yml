@@ -940,7 +940,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install framework dependencies
-        run: docker run --rm -v "$PWD":/app -w /app/packages/framework composer:2 install --no-interaction --prefer-dist
+        run: docker run --rm -v "$PWD":/app -w /app/packages/framework composer:2.11 install --no-interaction --prefer-dist
 
       - name: Start the SAPI under test
         run: |
@@ -1108,7 +1108,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install database-bridge dependencies
-        run: docker run --rm -v "$PWD":/app -w /app/packages/database-bridge composer:2 install --no-interaction --prefer-dist
+        run: docker run --rm -v "$PWD":/app -w /app/packages/database-bridge composer:2.11 install --no-interaction --prefer-dist
 
       - name: Start the SAPI serving the fixture
         # The ini and the nginx template are runtime-conformance's own:
@@ -1185,7 +1185,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install neuron dependencies
-        run: docker run --rm -v "$PWD":/app -w /app/packages/neuron composer:2 install --no-interaction --prefer-dist
+        run: docker run --rm -v "$PWD":/app -w /app/packages/neuron composer:2.11 install --no-interaction --prefer-dist
 
       - name: Start the provider and the SAPI serving the fixture
         # The ini and the nginx template are runtime-conformance's own.

@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip $PHPIZE_D
     && apt-get purge -y --auto-remove $PHPIZE_DEPS \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2.11 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 

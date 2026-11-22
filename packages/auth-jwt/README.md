@@ -94,7 +94,7 @@ See [`kinetis/auth`](https://github.com/kinetis-dev/auth).
 composer require kinetis/auth-jwt
 ```
 
-Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework). Full documentation:
+Requires PHP 8.4 or 8.5 and [`kinetis/framework`](https://github.com/kinetis-dev/framework). Full documentation:
 [kinetis.dev/docs/auth-jwt.html](https://kinetis.dev/docs/auth-jwt.html).
 
 ## License
