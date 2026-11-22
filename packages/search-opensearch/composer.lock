@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c09b10df5875f506bce1a261f36f3f3a",
+    "content-hash": "5fc7ae692ce98ab0e484a26f4c646d5f",
     "packages": [
         {
             "name": "amphp/amp",
@@ -4709,16 +4709,16 @@
         },
         {
             "name": "neuron-core/neuron-ai",
-            "version": "4.1.25",
+            "version": "4.1.27",
             "source": {
                 "type": "git",
                 "url": "https://github.com/neuron-core/neuron-ai.git",
-                "reference": "b9611f6d25204f30beee983d0965f847bec5e393"
+                "reference": "c2b9a03e003776b7c72f697a10a5d5b0368db467"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/neuron-core/neuron-ai/zipball/b9611f6d25204f30beee983d0965f847bec5e393",
-                "reference": "b9611f6d25204f30beee983d0965f847bec5e393",
+                "url": "https://api.github.com/repos/neuron-core/neuron-ai/zipball/c2b9a03e003776b7c72f697a10a5d5b0368db467",
+                "reference": "c2b9a03e003776b7c72f697a10a5d5b0368db467",
                 "shasum": ""
             },
             "require": {
@@ -4790,7 +4790,7 @@
             "description": "A unified layer for building AI-native applications in PHP.",
             "support": {
                 "issues": "https://github.com/neuron-core/neuron-ai/issues",
-                "source": "https://github.com/neuron-core/neuron-ai/tree/frontend-v0.4.0"
+                "source": "https://github.com/neuron-core/neuron-ai/tree/4.1.27"
             },
             "funding": [
                 {
@@ -4798,7 +4798,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2026-11-14T17:59:28+00:00"
+            "time": "2026-11-17T18:22:05+00:00"
         },
         {
             "name": "nikic/php-parser",

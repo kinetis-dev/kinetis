@@ -92,7 +92,26 @@ final class RemoteMcpTest extends TestCase
         self::assertSame(['initialize', 'notifications/initialized', 'tools/list', 'tools/call'], self::methods());
     }
 
-    public function test_an_application_scoped_connector_shares_one_session_and_a_request_scoped_one_opens_its_own(): void
+    public function test_a_released_connector_ends_its_session_with_a_delete_carrying_the_session_id(): void
+    {
+        $this->answer(self::connector()->tools(), 'echo_text', ['text' => 'hello']);
+
+        $session = self::requests()[1][1];
+
+        self::assertNotSame('', $session);
+        self::assertSame(
+            [
+                ['initialize', ''],
+                ['notifications/initialized', $session],
+                ['tools/list', $session],
+                ['tools/call', $session],
+                ['DELETE', $session],
+            ],
+            self::requests(),
+        );
+    }
+
+    public function test_an_application_scoped_connector_shares_one_session_and_a_request_scoped_one_opens_and_ends_its_own(): void
     {
         $shared = self::connector();
 
@@ -108,7 +127,7 @@ final class RemoteMcpTest extends TestCase
             $this->answer(self::connector()->tools(), 'echo_text', ['text' => $request]);
         }
 
-        self::assertSame(['initialize' => 2, 'tools/call' => 2, 'tools/list' => 2], self::counts());
+        self::assertSame(['DELETE' => 2, 'initialize' => 2, 'tools/call' => 2, 'tools/list' => 2], self::counts());
     }
 
     public function test_a_result_over_the_byte_ceiling_fails_with_the_ceiling(): void
@@ -203,13 +222,22 @@ final class RemoteMcpTest extends TestCase
         return null;
     }
 
-    /** @return list<string> the JSON-RPC methods the server received, in order */
+    /** @return list<string> the JSON-RPC methods, or DELETE, the server received, in order */
     private static function methods(): array
     {
-        return array_values(array_filter(explode("\n", (string) file_get_contents(self::$log))));
+        return array_map(static fn (array $request): string => $request[0], self::requests());
     }
 
-    /** @return array<string, int> how often the server received each request method */
+    /** @return list<array{string, string}> each request's JSON-RPC method, or DELETE, and its Mcp-Session-Id, in order */
+    private static function requests(): array
+    {
+        return array_map(
+            static fn (string $line): array => [strtok($line, ' '), (string) strtok('')],
+            array_values(array_filter(explode("\n", (string) file_get_contents(self::$log)))),
+        );
+    }
+
+    /** @return array<string, int> how often the server received each request method, or DELETE */
     private static function counts(): array
     {
         $counts = array_count_values(array_filter(self::methods(), static fn (string $method): bool => $method !== 'notifications/initialized'));
