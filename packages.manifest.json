@@ -810,7 +810,7 @@
             "description": "Cookie-backed sessions and CSRF protection for Kinetis — file, Redis, and SQL storage behind one store interface.",
             "namespace": "Kinetis\\Session\\",
             "testNamespace": "Kinetis\\Session\\Tests\\",
-            "version": "1.4.0",
+            "version": "1.4.1",
             "requires": [
                 "framework"
             ],

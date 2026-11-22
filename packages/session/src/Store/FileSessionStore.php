@@ -306,6 +306,9 @@ final readonly class FileSessionStore implements SessionStoreInterface, GarbageC
         );
     }
 
+    /**
+     * @psalm-taint-escape ssrf the id is 32 hex characters, so the path has no scheme or traversal
+     */
     private function pathFor(string $id): string
     {
         // Ids are validated by the middleware before ever reaching a
