@@ -304,7 +304,10 @@ a package installs, such as the transaction guard `kinetis/database-bridge`
 rolls back on disposal, behaves as it does in production. A command
 that throws is logged and dispatches `CommandFailed` as it would under
 the binary; the result carries exit code `1` and the throwable instead of
-rethrowing it. The streams are captured in memory without colour.
+rethrowing it. The streams are captured in memory without colour. A
+`--help` or `-h` argument returns the command's help on `output` with
+exit code `0` and leaves the command unrun, as the binary does; see
+{doc}`cli`.
 
 Commands are discovered from your source when the application boots,
 never from `.kinetis-cache/`, so a command you just wrote is runnable
