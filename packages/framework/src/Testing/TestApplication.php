@@ -10,6 +10,7 @@ use Kinetis\Cache\PluginDiscovery;
 use Kinetis\Config\Config;
 use Kinetis\Config\EnvFile;
 use Kinetis\Console\CommandDiscovery;
+use Kinetis\Console\CommandHelp;
 use Kinetis\Console\CommandRegistry;
 use Kinetis\Console\CommandRunner;
 use Kinetis\Console\Output;
@@ -180,7 +181,9 @@ final class TestApplication
      * as CommandFailed with exit code 1, and the scope disposed (70 when
      * only that disposal fails). Stdout and stderr are captured
      * separately, without colour. The throwable is returned on the
-     * result, not rethrown.
+     * result, not rethrown. A `--help` or `-h` argument returns the
+     * command's help with exit code 0 and does not run the command, as
+     * bin/kinetis does.
      *
      * The application stays booted across calls; dispose() still ends
      * it. A #[Command(bootstrap: false)] command runs against this
@@ -195,6 +198,10 @@ final class TestApplication
     {
         $definition = $this->commands->findCommand($name)
             ?? throw new InvalidArgumentException("No discovered command is named \"{$name}\".");
+
+        if (CommandHelp::requested($arguments)) {
+            return new CommandResult(0, CommandHelp::forCommand($definition), '', null);
+        }
 
         $stdout = fopen('php://memory', 'w+');
         $stderr = fopen('php://memory', 'w+');

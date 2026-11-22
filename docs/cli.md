@@ -20,6 +20,29 @@ Available commands:
   app:cleanup-sessions   Deletes sessions older than 30 days
 ```
 
+That listing goes to STDERR with exit code `1`. Asking for it with
+`kinetis --help`, `kinetis -h` or `kinetis help` prints the same list to
+STDOUT under a `Usage:` heading and exits `0`. `help` is the console's
+own only while no discovered command is named `help`.
+
+`--help` or `-h` anywhere after a command's name prints that command's
+usage and description to STDOUT and exits `0`:
+
+```{code-block} text
+$ php vendor/bin/kinetis app:send-report --help
+Usage:
+  kinetis app:send-report [arguments]
+
+Emails a report to a given address
+```
+
+`[arguments]` appears only for a command whose method takes
+`CommandArguments`. Help is answered from the discovered command alone:
+the command does not run, no `Config` is built, and no bootstrap or
+package registration runs, so it works without the database credentials or other settings
+the command itself needs. Because the flag is consumed here, a command
+never receives `--help` or `-h` as an argument.
+
 ## Writing your own commands
 
 Kinetis does not schedule commands. Your infrastructure does that; see
