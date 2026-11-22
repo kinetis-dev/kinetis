@@ -128,4 +128,9 @@ final class NoWorkerUnsafeNeuronRuleTest extends RuleTestCase
     {
         $this->analyse([__DIR__ . '/Fixtures/WorkerSafeNeuronCalls.php'], []);
     }
+
+    public function test_passes_a_built_in_constructor_with_several_signatures(): void
+    {
+        $this->analyse([__DIR__ . '/Fixtures/BuiltInConstructorCalls.php'], []);
+    }
 }
