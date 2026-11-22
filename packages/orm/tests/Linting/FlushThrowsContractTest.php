@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kinetis\Orm\Tests\Linting;
 
+use PHPStan\Rules\Comparison\ConstantConditionInTraitHelper;
 use PHPStan\Rules\Exceptions\CatchWithUnthrownExceptionRule;
 use PHPStan\Rules\Exceptions\DefaultExceptionTypeResolver;
 use PHPStan\Rules\Rule;
@@ -23,6 +24,7 @@ final class FlushThrowsContractTest extends RuleTestCase
     {
         return new CatchWithUnthrownExceptionRule(
             self::getContainer()->getByType(DefaultExceptionTypeResolver::class),
+            self::getContainer()->getByType(ConstantConditionInTraitHelper::class),
             true,
         );
     }
