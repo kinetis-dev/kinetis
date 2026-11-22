@@ -63,6 +63,7 @@ final class RouteDiscovery
 
     /**
      * @return list<string>
+     * @psalm-taint-escape callable operator-set deployment configuration, not request input
      */
     private static function pathsFromEnv(): array
     {

@@ -168,6 +168,12 @@ final class SuperglobalsBridge
 
         foreach ($response->getHeaders() as $name => $values) {
             foreach ($values as $index => $value) {
+                /**
+                 * The application's own response headers. PHP's header()
+                 * refuses a value containing a line break.
+                 *
+                 * @psalm-suppress TaintedInput
+                 */
                 header("{$name}: {$value}", replace: $index === 0);
             }
         }
@@ -193,6 +199,12 @@ final class SuperglobalsBridge
             return;
         }
 
+        /**
+         * The application's own response body, which this boundary
+         * emits verbatim.
+         *
+         * @psalm-suppress TaintedInput
+         */
         echo (string) $response->getBody();
     }
 
