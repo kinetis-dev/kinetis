@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c8d7f4e3c5b26c9b830a493371d46bdc",
+    "content-hash": "15b486878151f187e72785be20670f2c",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -74,12 +74,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -138,10 +138,10 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp-protocol",
-                "reference": "2d2f12c24a88b23da07e6427bb9bf4a2fbc29d69"
+                "reference": "d27488891644c1600f98e69fefb6487626e71c89"
             },
             "require": {
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -3149,12 +3149,12 @@
             "dist": {
                 "type": "path",
                 "url": "../auth",
-                "reference": "971f1f704c0529b7b9ba43147dae16fd2bc23883"
+                "reference": "b199ce63c08e494e9dd0c999908f53f8f8f57dbc"
             },
             "require": {
                 "kinetis/framework": "dev-main",
                 "nyholm/psr7": "^1.8.2",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/http-message": "^2.0",
                 "psr/http-server-middleware": "^1.0.2"
             },
@@ -7891,7 +7891,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

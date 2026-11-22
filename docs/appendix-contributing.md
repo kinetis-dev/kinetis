@@ -243,7 +243,7 @@ the repo root; the next `tools/generate-composer.php` run overwrites a
 hand edit, and CI's drift check fails if the two disagree. Fix it in the
 manifest instead.
 
-`packages.manifest.json` has a `defaults` block (PHP version floor,
+`packages.manifest.json` has a `defaults` block (supported PHP range,
 license, uniform dev-tooling versions, the shared PHPStan rule set) plus
 one entry per package: `requires`/`requiresDev` name *sibling package
 keys* (not full Composer names — `"framework"`, not `"kinetis/framework"`),

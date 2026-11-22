@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "bee931465d118b8b07ae9ca893bd88c1",
+    "content-hash": "3ce0641d89bea7f24164fee0a1bab15e",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -74,12 +74,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -3108,11 +3108,11 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp-docs",
-                "reference": "ba68a39d9d0da06b5a71092c702443fbe4773db0"
+                "reference": "1c85aa95d3dca49b78b9697d40a7ac44d27c944e"
             },
             "require": {
                 "kinetis/mcp-protocol": "dev-main",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "symfony/http-client": "^8.1.11",
                 "symfony/http-client-contracts": "^3.7.1"
             },
@@ -3155,10 +3155,10 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp-protocol",
-                "reference": "2d2f12c24a88b23da07e6427bb9bf4a2fbc29d69"
+                "reference": "d27488891644c1600f98e69fefb6487626e71c89"
             },
             "require": {
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -3196,14 +3196,14 @@
             "dist": {
                 "type": "path",
                 "url": "../orbitron",
-                "reference": "73f22a0da7f7f9a66ed6d5d72575aebe29198b39"
+                "reference": "ee35bd512122fa88039c7ee36086431489e711c1"
             },
             "require": {
                 "composer-runtime-api": "^2.0",
                 "kinetis/framework": "dev-main",
                 "kinetis/mcp-docs": "dev-main",
                 "kinetis/mcp-protocol": "dev-main",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -8123,7 +8123,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

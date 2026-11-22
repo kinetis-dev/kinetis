@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "c86772f6af33bc9ae9973cef6719a6ee",
+    "content-hash": "1fdb2eb4eb76d3c5eb6d8d84a37edc16",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -74,12 +74,12 @@
             "dist": {
                 "type": "path",
                 "url": "../database-bridge",
-                "reference": "a66fdca9e51218e7e62515db9fb4bad2b275b45d"
+                "reference": "67f469f1be8ea84eca408e1b2b5c0904092a597c"
             },
             "require": {
                 "kinetis/framework": "dev-main",
                 "kinetis/persistence": "dev-main",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/log": "^3.0.2"
             },
             "conflict": {
@@ -138,12 +138,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -202,10 +202,10 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "308d55ede540181b9fc90974200facfc8dc1b16b"
+                "reference": "90ba9de229ee1ee107259145660fddeaf133ba85"
             },
             "require": {
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
             },
@@ -7917,7 +7917,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

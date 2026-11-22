@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "faf793c6bb2b41e5f3adb4e561be15ad",
+    "content-hash": "1e57ae679e6d02b6f54e180c69368108",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -74,12 +74,12 @@
             "dist": {
                 "type": "path",
                 "url": "../database-bridge",
-                "reference": "a66fdca9e51218e7e62515db9fb4bad2b275b45d"
+                "reference": "67f469f1be8ea84eca408e1b2b5c0904092a597c"
             },
             "require": {
                 "kinetis/framework": "dev-main",
                 "kinetis/persistence": "dev-main",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/log": "^3.0.2"
             },
             "conflict": {
@@ -138,12 +138,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -202,10 +202,10 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "308d55ede540181b9fc90974200facfc8dc1b16b"
+                "reference": "90ba9de229ee1ee107259145660fddeaf133ba85"
             },
             "require": {
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
             },
@@ -253,11 +253,11 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "b5713b50ac31c7af9b2f817d04cbd38e353c47cd"
+                "reference": "1506acb2a994e8d3409d47a496c70fdb3dde4e26"
             },
             "require": {
                 "kinetis/framework": "dev-main",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
@@ -3278,13 +3278,13 @@
             "dist": {
                 "type": "path",
                 "url": "../migrations",
-                "reference": "437b31fd5882cbea6ab828513372c3ce1e0b433d"
+                "reference": "44d5f1a19cf311036bbff7229f99e8999a167a5b"
             },
             "require": {
                 "kinetis/database-bridge": "dev-main",
                 "kinetis/framework": "dev-main",
                 "kinetis/persistence": "dev-main",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -3331,14 +3331,14 @@
             "dist": {
                 "type": "path",
                 "url": "../queue-sql",
-                "reference": "8507658c70ba6387d1c7fee6ec9257f339d5177e"
+                "reference": "12a2bd7ae728861bc5d6fe1cb3b5d84daf994b85"
             },
             "require": {
                 "kinetis/database-bridge": "dev-main",
                 "kinetis/framework": "dev-main",
                 "kinetis/persistence": "dev-main",
                 "kinetis/queue": "dev-main",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -8076,7 +8076,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

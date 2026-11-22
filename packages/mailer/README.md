@@ -96,7 +96,7 @@ needed in either package) if that matters for your app.
 composer require kinetis/mailer
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/mailer.html](https://kinetis.dev/docs/mailer.html).
 

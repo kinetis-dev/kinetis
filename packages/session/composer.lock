@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "2c4ba2501b808c8d6d55c0b785a3650d",
+    "content-hash": "bbde23e2d58b1b39e403dbf0fa56b00b",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -74,12 +74,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -3189,7 +3189,7 @@
             "dist": {
                 "type": "path",
                 "url": "../cache-redis",
-                "reference": "c82aabeacd289d2bc8cd1197a6133014fddcae9e"
+                "reference": "14bc5a4155f40f00a732e4986ddaa824dfc969d3"
             },
             "require": {
                 "amphp/amp": "^3.1.3",
@@ -3198,7 +3198,7 @@
                 "amphp/socket": "^2.4.0",
                 "kinetis/framework": "dev-main",
                 "kinetis/redis": "dev-main",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -3239,10 +3239,10 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "308d55ede540181b9fc90974200facfc8dc1b16b"
+                "reference": "90ba9de229ee1ee107259145660fddeaf133ba85"
             },
             "require": {
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
             },
@@ -3290,13 +3290,13 @@
             "dist": {
                 "type": "path",
                 "url": "../redis",
-                "reference": "ca2d10a87f8dd68b51e38e74705bb7929005a3d1"
+                "reference": "dbff17bbeaf887c92925f516ab1c51173e0c0450"
             },
             "require": {
                 "amphp/amp": "^3.1.3",
                 "amphp/redis": "^2.0.4",
                 "amphp/socket": "^2.4.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "revolt/event-loop": "^1.0.9"
             },
             "require-dev": {
@@ -8034,7 +8034,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

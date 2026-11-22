@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "6ef3d2f2e0a14e15b47a24393f721911",
+    "content-hash": "d7628e67dca15d27a4d679ab04932c21",
     "packages": [
         {
             "name": "graham-campbell/result-type",
@@ -74,12 +74,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -138,10 +138,10 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "308d55ede540181b9fc90974200facfc8dc1b16b"
+                "reference": "90ba9de229ee1ee107259145660fddeaf133ba85"
             },
             "require": {
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
             },
@@ -3159,13 +3159,13 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp",
-                "reference": "1dda683bd9c790e745d5171cecbde158364ad9c0"
+                "reference": "cf40301cae40332e2f6fe40da7f1407ab9f7fbae"
             },
             "require": {
                 "kinetis/framework": "dev-main",
                 "kinetis/mcp-protocol": "dev-main",
                 "nyholm/psr7": "^1.8.2",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/http-message": "^2.0",
                 "psr/http-server-middleware": "^1.0.2",
@@ -3215,10 +3215,10 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp-protocol",
-                "reference": "2d2f12c24a88b23da07e6427bb9bf4a2fbc29d69"
+                "reference": "d27488891644c1600f98e69fefb6487626e71c89"
             },
             "require": {
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -3256,12 +3256,12 @@
             "dist": {
                 "type": "path",
                 "url": "../orm",
-                "reference": "13d3c97de4e49821de6fbd5eb9eed59af3d1e2cb"
+                "reference": "60c4e780f355277ab40f842323018c46b58af39c"
             },
             "require": {
                 "kinetis/persistence": "dev-main",
                 "kinetis/query-builder": "dev-main",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -3306,11 +3306,11 @@
             "dist": {
                 "type": "path",
                 "url": "../query-builder",
-                "reference": "44acf53c80a462f05840fd7264db4ceb048c95fc"
+                "reference": "aa5c450d652f8caf914ff3d0305525660772bfdd"
             },
             "require": {
                 "kinetis/persistence": "dev-main",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -3352,11 +3352,11 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "b5713b50ac31c7af9b2f817d04cbd38e353c47cd"
+                "reference": "1506acb2a994e8d3409d47a496c70fdb3dde4e26"
             },
             "require": {
                 "kinetis/framework": "dev-main",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
@@ -8105,7 +8105,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

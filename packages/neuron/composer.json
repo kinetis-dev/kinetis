@@ -9,7 +9,7 @@
         }
     ],
     "require": {
-        "php": "^8.4",
+        "php": ">=8.4 <8.6",
         "kinetis/aws-sigv4": "dev-main",
         "kinetis/framework": "dev-main",
         "kinetis/mcp": "dev-main",

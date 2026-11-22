@@ -112,7 +112,7 @@ into, without duplicating the transport's own config-reading logic.
 composer require kinetis/search-opensearch
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/search`](https://github.com/kinetis-dev/search).
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/search`](https://github.com/kinetis-dev/search).
 Full documentation:
 [kinetis.dev/docs/search-opensearch.html](https://kinetis.dev/docs/search-opensearch.html).
 

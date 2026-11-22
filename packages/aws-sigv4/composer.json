@@ -9,7 +9,7 @@
         }
     ],
     "require": {
-        "php": "^8.4",
+        "php": ">=8.4 <8.6",
         "kinetis/revolt-http-client": "dev-main",
         "amphp/http-client": "^5.3.6",
         "async-aws/core": "^1.29.2",

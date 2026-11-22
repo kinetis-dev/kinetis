@@ -144,7 +144,7 @@ took the event, so the driver never repeats the attempt. See
 composer require kinetis/broadcasting
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework), and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/broadcasting.html](https://kinetis.dev/docs/broadcasting.html).
 

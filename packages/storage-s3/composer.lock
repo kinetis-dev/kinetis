@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "68435ebfc6fc7be743dfd4299f505322",
+    "content-hash": "a26bfe8456e8da8ab8505754e845c054",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1467,12 +1467,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -1531,12 +1531,12 @@
             "dist": {
                 "type": "path",
                 "url": "../revolt-http-client",
-                "reference": "f4ed62a90a5b1df58aaf6ae499226283bdbcad26"
+                "reference": "4328cf627a773fa0eab61378c909b66d4f7dcefe"
             },
             "require": {
                 "amphp/http-client": "^5.3.6",
                 "ext-zlib": "*",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "revolt/event-loop": "^1.0.9",
                 "symfony/http-client": "^8.1.11",
                 "symfony/http-client-contracts": "^3.7.1"
@@ -1581,7 +1581,7 @@
             "dist": {
                 "type": "path",
                 "url": "../storage",
-                "reference": "2639d1b31dd8360c5ff5c33936900b9e1f47b6ec"
+                "reference": "da6b26f9b08bd56a66694909d4c7e925e5dcc2f0"
             },
             "require": {
                 "amphp/byte-stream": "^2.1.2",
@@ -1589,7 +1589,7 @@
                 "kinetis/framework": "dev-main",
                 "league/flysystem": "^3.35.3",
                 "league/mime-type-detection": "^1.17.0",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -8928,7 +8928,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

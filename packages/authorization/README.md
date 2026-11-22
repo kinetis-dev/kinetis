@@ -105,7 +105,7 @@ type-checks correctly. See
 composer require kinetis/authorization
 ```
 
-Requires PHP 8.4 or later and [`kinetis/framework`](https://github.com/kinetis-dev/framework).
+Requires PHP 8.4 or 8.5 and [`kinetis/framework`](https://github.com/kinetis-dev/framework).
 Documentation:
 [kinetis.dev/docs/authorization.html](https://kinetis.dev/docs/authorization.html)
 

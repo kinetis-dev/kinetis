@@ -56,7 +56,7 @@ update lifecycle.
 
 ## Running it directly
 
-Install the package with Composer, on PHP 8.4 or later:
+Install the package with Composer, on PHP 8.4 or 8.5:
 
 ```{code-block} sh
 composer require kinetis/mcp-docs

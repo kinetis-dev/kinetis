@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "a449ee18bb3e8dfd1b515848706dad45",
+    "content-hash": "85943e04544f900a477e90417a49ad3a",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1002,12 +1002,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -1066,11 +1066,11 @@
             "dist": {
                 "type": "path",
                 "url": "../queue",
-                "reference": "b5713b50ac31c7af9b2f817d04cbd38e353c47cd"
+                "reference": "1506acb2a994e8d3409d47a496c70fdb3dde4e26"
             },
             "require": {
                 "kinetis/framework": "dev-main",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
@@ -1121,13 +1121,13 @@
             "dist": {
                 "type": "path",
                 "url": "../redis",
-                "reference": "ca2d10a87f8dd68b51e38e74705bb7929005a3d1"
+                "reference": "dbff17bbeaf887c92925f516ab1c51173e0c0450"
             },
             "require": {
                 "amphp/amp": "^3.1.3",
                 "amphp/redis": "^2.0.4",
                 "amphp/socket": "^2.4.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "revolt/event-loop": "^1.0.9"
             },
             "require-dev": {
@@ -7987,7 +7987,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

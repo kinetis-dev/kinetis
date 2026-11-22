@@ -129,7 +129,7 @@ composer require kinetis/search-opensearch     # OpenSearch
 composer require kinetis/search-elasticsearch  # Elasticsearch
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
 and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/search-engines.html](https://kinetis.dev/docs/search-engines.html).

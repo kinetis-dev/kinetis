@@ -108,7 +108,7 @@ form's `_token` field, with `hash_equals()` comparison.
 composer require kinetis/session
 ```
 
-Requires PHP 8.4+ and [`kinetis/framework`](https://github.com/kinetis-dev/framework).
+Requires PHP 8.4 or 8.5 and [`kinetis/framework`](https://github.com/kinetis-dev/framework).
 Full documentation:
 [kinetis.dev/docs/session.html](https://kinetis.dev/docs/session.html).
 

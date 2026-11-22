@@ -163,7 +163,7 @@ rules:
 composer require kinetis/neuron
 ```
 
-Requires PHP 8.4+, [`neuron-core/neuron-ai`](https://github.com/neuron-core/neuron-ai),
+Requires PHP 8.4 or 8.5, [`neuron-core/neuron-ai`](https://github.com/neuron-core/neuron-ai),
 [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client),
 [`kinetis/aws-sigv4`](https://github.com/kinetis-dev/aws-sigv4)
 and [`kinetis/mcp`](https://github.com/kinetis-dev/mcp).

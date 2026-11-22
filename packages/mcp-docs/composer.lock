@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "ce2a4843d860a032bd12336602aa528f",
+    "content-hash": "34dc4140b21ba53ba2f231c6a2b39e13",
     "packages": [
         {
             "name": "kinetis/mcp-protocol",
@@ -12,10 +12,10 @@
             "dist": {
                 "type": "path",
                 "url": "../mcp-protocol",
-                "reference": "2d2f12c24a88b23da07e6427bb9bf4a2fbc29d69"
+                "reference": "d27488891644c1600f98e69fefb6487626e71c89"
             },
             "require": {
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -7292,7 +7292,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"

@@ -145,7 +145,7 @@ is dropped rather than resent: the collector may already hold it — see
 composer require kinetis/telemetry
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework),
 and [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client).
 Full documentation:
 [kinetis.dev/docs/telemetry.html](https://kinetis.dev/docs/telemetry.html).

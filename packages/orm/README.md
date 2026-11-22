@@ -1693,7 +1693,7 @@ classes, and a static property on one stays reported.
 composer require kinetis/orm
 ```
 
-Requires PHP 8.4+ and the extension for the driver you use (see
+Requires PHP 8.4 or 8.5 and the extension for the driver you use (see
 [`kinetis/persistence`](https://github.com/kinetis-dev/persistence)). In
 a Kinetis application,
 [`kinetis/database-bridge`](https://github.com/kinetis-dev/database-bridge)

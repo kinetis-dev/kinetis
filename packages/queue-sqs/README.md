@@ -116,7 +116,7 @@ automatically.
 composer require kinetis/queue-sqs
 ```
 
-Requires PHP 8.4+, [`kinetis/framework`](https://github.com/kinetis-dev/framework), [`kinetis/queue`](https://github.com/kinetis-dev/queue), and
+Requires PHP 8.4 or 8.5, [`kinetis/framework`](https://github.com/kinetis-dev/framework), [`kinetis/queue`](https://github.com/kinetis-dev/queue), and
 [`kinetis/revolt-http-client`](https://github.com/kinetis-dev/revolt-http-client). Full documentation:
 [kinetis.dev/docs/queue-sqs.html](https://kinetis.dev/docs/queue-sqs.html).
 

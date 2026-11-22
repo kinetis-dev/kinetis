@@ -75,7 +75,7 @@ its URI and the literal term — at most 50 matching lines per call — and
 read a window around a line it reports. Read the same URI as a resource
 when the whole page is what you need.
 
-Requires PHP 8.4+. Full documentation:
+Requires PHP 8.4 or 8.5. Full documentation:
 [kinetis.dev/docs/mcp-docs.html](https://kinetis.dev/docs/mcp-docs.html).
 
 ## License

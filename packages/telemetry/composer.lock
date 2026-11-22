@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "1f4c1983ae5a78458387dd78ad91209b",
+    "content-hash": "03409f5d57e71fc640ccd506fcdb9818",
     "packages": [
         {
             "name": "amphp/amp",
@@ -1340,12 +1340,12 @@
             "dist": {
                 "type": "path",
                 "url": "../framework",
-                "reference": "ce0f411a26c9044dac982db6c849ed9bb8d72325"
+                "reference": "eb3fba7fe95f2e5a05b700ca703dbdbc9cc765b6"
             },
             "require": {
                 "nyholm/psr7": "^1.8.2",
                 "nyholm/psr7-server": "^1.1.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/container": "^2.0.2",
                 "psr/event-dispatcher": "^1.0.0",
                 "psr/http-message": "^2.0",
@@ -1404,12 +1404,12 @@
             "dist": {
                 "type": "path",
                 "url": "../revolt-http-client",
-                "reference": "f4ed62a90a5b1df58aaf6ae499226283bdbcad26"
+                "reference": "4328cf627a773fa0eab61378c909b66d4f7dcefe"
             },
             "require": {
                 "amphp/http-client": "^5.3.6",
                 "ext-zlib": "*",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "revolt/event-loop": "^1.0.9",
                 "symfony/http-client": "^8.1.11",
                 "symfony/http-client-contracts": "^3.7.1"
@@ -4966,7 +4966,7 @@
             "dist": {
                 "type": "path",
                 "url": "../cache-redis",
-                "reference": "c82aabeacd289d2bc8cd1197a6133014fddcae9e"
+                "reference": "14bc5a4155f40f00a732e4986ddaa824dfc969d3"
             },
             "require": {
                 "amphp/amp": "^3.1.3",
@@ -4975,7 +4975,7 @@
                 "amphp/socket": "^2.4.0",
                 "kinetis/framework": "dev-main",
                 "kinetis/redis": "dev-main",
-                "php": "^8.4"
+                "php": ">=8.4 <8.6"
             },
             "require-dev": {
                 "infection/infection": "^0.35.0",
@@ -5016,10 +5016,10 @@
             "dist": {
                 "type": "path",
                 "url": "../persistence",
-                "reference": "308d55ede540181b9fc90974200facfc8dc1b16b"
+                "reference": "90ba9de229ee1ee107259145660fddeaf133ba85"
             },
             "require": {
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/log": "^3.0.2",
                 "revolt/event-loop": "^1.0.9"
             },
@@ -5067,13 +5067,13 @@
             "dist": {
                 "type": "path",
                 "url": "../redis",
-                "reference": "ca2d10a87f8dd68b51e38e74705bb7929005a3d1"
+                "reference": "dbff17bbeaf887c92925f516ab1c51173e0c0450"
             },
             "require": {
                 "amphp/amp": "^3.1.3",
                 "amphp/redis": "^2.0.4",
                 "amphp/socket": "^2.4.0",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "revolt/event-loop": "^1.0.9"
             },
             "require-dev": {
@@ -5116,11 +5116,11 @@
             "dist": {
                 "type": "path",
                 "url": "../session",
-                "reference": "a74898783530ecb9617692de1b743778bb218964"
+                "reference": "1ef14828bdf36ce681d5ec6bde3e72e3d72b8874"
             },
             "require": {
                 "kinetis/framework": "dev-main",
-                "php": "^8.4",
+                "php": ">=8.4 <8.6",
                 "psr/http-message": "^2.0",
                 "psr/http-server-middleware": "^1.0.2",
                 "psr/simple-cache": "^3.0.0"
@@ -9527,7 +9527,7 @@
     "prefer-stable": true,
     "prefer-lowest": false,
     "platform": {
-        "php": "^8.4"
+        "php": ">=8.4 <8.6"
     },
     "platform-dev": {},
     "plugin-api-version": "2.11.0"
