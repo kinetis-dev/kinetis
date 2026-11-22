@@ -178,7 +178,7 @@ RUN apk add --no-cache unzip \
     && docker-php-ext-install pcntl \
     && apk del .build-deps
 
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --from=composer:2.11 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
 

@@ -74,7 +74,7 @@ toolchain works:
 git clone https://github.com/kinetis-dev/kinetis.git
 cd kinetis
 
-docker run --rm -v "$PWD":/app -w /app/packages/framework composer:2 install
+docker run --rm -v "$PWD":/app -w /app/packages/framework composer:2.11 install
 docker run --rm -v "$PWD":/app -w /app/packages/framework php:8.4.27-cli-alpine php vendor/bin/phpunit
 ```
 
@@ -87,7 +87,7 @@ If you're working on a satellite package, install it the same way, from
 *its own* directory:
 
 ```sh
-docker run --rm -v "$PWD":/app -w /app/packages/queue composer:2 install
+docker run --rm -v "$PWD":/app -w /app/packages/queue composer:2.11 install
 ```
 
 Composer resolves `kinetis/framework`, and any other sibling `queue`
@@ -151,7 +151,7 @@ separate Alpine package, and neither ships in the base
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -w /app/tools composer:2 install --no-interaction --prefer-dist
+  -v "$PWD":/app -w /app/tools composer:2.11 install --no-interaction --prefer-dist
 docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
 ```
@@ -280,7 +280,7 @@ The full flow:
    bare one, which would drag in unrelated version bumps across that
    package's whole dependency tree:
    ```sh
-   docker run --rm -v "$PWD":/app -w /app/packages/<name> composer:2 update <dep1> <dep2> ... --with-all-dependencies
+   docker run --rm -v "$PWD":/app -w /app/packages/<name> composer:2.11 update <dep1> <dep2> ... --with-all-dependencies
    ```
    Name every entry the package's `require` *and* `require-dev` now
    list, not just what changed — unchanged entries are a harmless no-op,

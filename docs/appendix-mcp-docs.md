@@ -30,7 +30,7 @@ name is refused rather than reused, as is a path that exists and is not
 a directory. A mistyped `KINETIS_MCP_DOCS_DIR` never has a
 `composer.json` written into it.
 
-Every Docker step runs the `composer:2` image as the invoking user's uid
+Every Docker step runs the `composer:2.11` image as the invoking user's uid
 and gid, with `HOME` and `COMPOSER_HOME` under `/tmp`, so nothing it
 writes is owned by root and the host needs no PHP, Composer or `sudo`.
 
@@ -56,7 +56,7 @@ Registration names the server `kinetis-docs`. For Claude Code the script
 removes an existing user-scope registration of that name and adds one at
 user scope; for Codex it runs `codex mcp remove` and `codex mcp add`.
 The registered command runs `sh vendor/kinetis/mcp-docs/start.sh` in an
-interactive `composer:2` container over the install directory, so a
+interactive `composer:2.11` container over the install directory, so a
 client session starts the server.
 
 ## Updates

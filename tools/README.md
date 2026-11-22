@@ -124,7 +124,7 @@ Step by step, from the manifest edit to the commit:
    whole dependency tree. Name every package the manifest now lists
    for the changed package, both `require` and `require-dev`:
    ```sh
-   docker run --rm -v "$PWD":/app -w /app/packages/<name> composer:2 update <name1> <name2> ... --with-all-dependencies
+   docker run --rm -v "$PWD":/app -w /app/packages/<name> composer:2.11 update <name1> <name2> ... --with-all-dependencies
    ```
    Pass the package's *entire* current dependency list, not just what
    changed — unchanged entries are a harmless no-op, and anything that
@@ -132,7 +132,7 @@ Step by step, from the manifest edit to the commit:
    separate, possibly-inconsistent updates.
 5. Validate the lock matches:
    ```sh
-   docker run --rm -v "$PWD":/app -w /app/packages/<name> composer:2 validate --strict
+   docker run --rm -v "$PWD":/app -w /app/packages/<name> composer:2.11 validate --strict
    ```
    Composer shells out to git to resolve a `path` repository's version.
    Where the container's user doesn't own the checkout, git refuses and
@@ -235,7 +235,7 @@ package alongside it, and it is the publication's splitter:
 
 ```sh
 docker run --rm -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$PWD":/app -w /app/tools composer:2 install --no-interaction --prefer-dist
+  -v "$PWD":/app -w /app/tools composer:2.11 install --no-interaction --prefer-dist
 docker run --rm -v "$PWD":/app -w /app/tools php:8.4.27-cli-alpine sh -c \
   "apk add --no-cache git git-subtree >/dev/null 2>&1 && git config --global safe.directory '*' && php vendor/bin/phpunit"
 ```

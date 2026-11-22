@@ -3,7 +3,7 @@
 # Installs kinetis/mcp-docs from Packagist into its own directory and
 # registers it as an MCP server with one client. Nothing here touches
 # the Kinetis monorepo, and nothing needs PHP or Composer on the host:
-# both the install and the registered server run through the composer:2
+# both the install and the registered server run through the composer:2.11
 # image.
 #
 #   ./setup.sh          register with Claude Code
@@ -91,7 +91,7 @@ echo "$MARKER_TEXT" > "$MARKER_FILE"
 # of composer install. A session spawning start.sh against this
 # directory, or a second run of this script, waits there and reads a
 # finished vendor tree rather than one halfway through being replaced.
-# composer:2 carries the flock, so the host still needs nothing but
+# composer:2.11 carries the flock, so the host still needs nothing but
 # Docker and the client CLI.
 #
 # composer.json is rewritten on every run, and composer install refuses
@@ -120,7 +120,7 @@ composer install --no-interaction --prefer-dist
 date +%s > .last-update-check
 '
 
-if ! COMPOSER_LOG=$("${DOCKER_RUN[@]}" composer:2 sh -c "$INSTALL_SCRIPT" 2>&1); then
+if ! COMPOSER_LOG=$("${DOCKER_RUN[@]}" composer:2.11 sh -c "$INSTALL_SCRIPT" 2>&1); then
     echo "composer install failed:" >&2
     echo "$COMPOSER_LOG" >&2
     exit 1
@@ -131,7 +131,7 @@ fi
 # session shares this one directory - and then hands stdin and stdout
 # to the server. Running it from vendor/ rather than from a copy means
 # that same update carries changes to it too.
-SERVER_COMMAND=("${DOCKER_RUN[@]}" -i composer:2 sh vendor/kinetis/mcp-docs/start.sh)
+SERVER_COMMAND=("${DOCKER_RUN[@]}" -i composer:2.11 sh vendor/kinetis/mcp-docs/start.sh)
 
 echo
 echo "Verifying the server responds..."
