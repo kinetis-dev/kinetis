@@ -491,7 +491,8 @@ object at the key.
 credentials only), `Content-Type` (when given), `policy` (the
 base64-encoded JSON policy) and `x-amz-signature`. No
 `success_action_status` is sent, so S3 answers a successful post with
-`204`. AWS refuses a post that carries any other field, except `file`.
+`204`. AWS refuses a post that carries any other field, except `file` and
+fields prefixed `x-ignore-`.
 
 **Signature.** `x-amz-signature` is the hex HMAC-SHA256 of the
 base64-encoded policy under the SigV4 signing key derived from the

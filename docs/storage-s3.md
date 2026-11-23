@@ -178,8 +178,8 @@ The browser posts `multipart/form-data` to `url`:
   field the policy does not cover.
 - The fields other than the file are limited to 20 KB in total.
 - Success is `204 No Content`. A refusal is an XML error document:
-  `EntityTooLarge` for a size outside the range, `AccessDenied` for a
-  changed field or an expired policy.
+  `EntityTooLarge` above the maximum size, `EntityTooSmall` below the
+  minimum, `AccessDenied` for a changed field or an expired policy.
 
 ```{code-block} javascript
 const form = new FormData();
@@ -229,9 +229,11 @@ $storage->move($path, 'videos/' . basename($path));
 
 - `fileExists()` reads `403 Forbidden` as absence; see
   [Permissions and uncertain outcomes](#permissions-and-uncertain-outcomes).
-- `mimeType()` returns the `Content-Type` the browser sent, pinned by the
-  policy when `authorize()` was given one. It is not a check of the
-  content; inspect the object before trusting its format.
+- `mimeType()` returns the pinned `Content-Type` when `authorize()` was
+  given one. Without one the policy covers no `Content-Type` field, the
+  browser cannot send one, and the object carries S3's default,
+  `binary/octet-stream`. Neither checks the content; inspect the object
+  before trusting its format.
 - Until the policy expires, the browser can post again to the same key
   and replace the object, so confirm, then move it.
 
