@@ -23,8 +23,8 @@ use SensitiveParameter;
  * exact key, a 1..$maxBytes size range and, when given, the exact
  * Content-Type; docs/appendix-storage.md states its conditions in full.
  *
- * Application-scoped: it holds the connection and an optional fixed
- * clock, and nothing from any request. Credentials are resolved on each
+ * Application-scoped: it holds the connection and nothing from any
+ * request. Credentials are resolved on each
  * call through the connection's own provider, which may suspend the
  * calling Fiber; the secret key only derives the signing key and never
  * enters the result.
@@ -49,13 +49,9 @@ final readonly class DirectUploads
         $this->prefixer = new PathPrefixer($connection->prefix);
     }
 
-    /**
-     * $now fixes the signing clock; without it each call reads the
-     * current UTC time.
-     */
-    public static function fromConfig(Config $config, string $connection = 'default', ?DateTimeImmutable $now = null): self
+    public static function fromConfig(Config $config, string $connection = 'default'): self
     {
-        return new self(S3Connection::fromConfig($config, $connection), $now);
+        return new self(S3Connection::fromConfig($config, $connection), null);
     }
 
     /**

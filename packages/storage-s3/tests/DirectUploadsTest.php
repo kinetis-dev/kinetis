@@ -261,12 +261,14 @@ final class DirectUploadsTest extends TestCase
      */
     private static function uploads(array $extra = []): DirectUploads
     {
-        return DirectUploads::fromConfig(new Config($extra + [
+        $connection = S3Connection::fromConfig(new Config($extra + [
             'FILESYSTEM_S3_BUCKET' => 'sigv4examplebucket',
             'FILESYSTEM_S3_REGION' => 'us-east-1',
             'FILESYSTEM_S3_ACCESS_KEY_ID' => self::ACCESS_KEY_ID,
             'FILESYSTEM_S3_SECRET_ACCESS_KEY' => self::SECRET,
-        ]), now: self::now());
+        ]), 'default');
+
+        return self::withClock($connection);
     }
 
     /**
@@ -299,6 +301,12 @@ final class DirectUploadsTest extends TestCase
             null,
             S3Connection::class,
         )();
+
+        return self::withClock($connection);
+    }
+
+    private static function withClock(S3Connection $connection): DirectUploads
+    {
         $now = self::now();
 
         return Closure::bind(
