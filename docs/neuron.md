@@ -683,27 +683,18 @@ the API key: never log that property.
 
 ## Vertex AI providers
 
-`GeminiVertex` and `AnthropicVertex` send their model calls through the
-`NeuronHttpClient` they are given, but authenticate with a Google
-service-account token that does not go through it. Neuron gets the token
-from `google/auth`'s `ServiceAccountCredentials::fetchAuthToken()` and
-passes it no HTTP handler, so `google/auth` posts to
-`https://oauth2.googleapis.com/token` through a Guzzle client of its own.
-That request blocks the worker and its whole event loop until Google
-answers. Guzzle's default client sets no overall timeout, so only its
-connect timeout and the network bound the stall.
+`GeminiVertex` and `AnthropicVertex` do not work over a
+`NeuronHttpClient`. They authenticate with a Google service-account
+token, which they request from `https://oauth2.googleapis.com/token`
+through the same HTTP client as their model calls. A `NeuronHttpClient`
+reaches only its own base URL's origin and refuses a request that sets
+its own `Host` header. The token request does both, so the client
+refuses it before sending it, and the provider's first call throws an
+`HttpException`. One client serves one origin so that a credential set
+on it reaches no other host ({doc}`revolt-http-client`).
 
-The provider keeps the token it fetched and fetches a new one when the
-token is within 60 seconds of expiring; Google issues it for an hour.
-The provider is built for each request
-({ref}`neuron-scope-request`), so the first Vertex call of every request
-makes one blocking token request, and later calls in the same request
-reuse the token. Neuron builds the credentials inside the provider and
-has no option to route the token request through another client.
-`Gemini`, which authenticates with an API key, makes no token request.
-
-Neuron does not require `google/auth`; install it to use these
-providers.
+`Gemini`, which authenticates with an API key, makes no token request
+and works over a `NeuronHttpClient`.
 
 (neuron-bedrock)=
 
@@ -894,7 +885,7 @@ requests:
 | `TypesenseVectorStore` | It sends through the Typesense SDK client, for which Kinetis has no non-blocking transport. |
 | `Neo4jGraphStore` | The Bolt driver blocks on its socket. |
 | `FileEvaluationCache` from Neuron's evaluation tools | Blocking file I/O. |
-| `GeminiVertex`, `AnthropicVertex` | Each request's first call fetches a service-account token with a blocking request ({ref}`neuron-vertex`). |
+| `GeminiVertex`, `AnthropicVertex` | A `NeuronHttpClient` refuses their service-account token request ({ref}`neuron-vertex`). |
 | `OpenAISpeechToText`, `ElevenLabsSpeechToText` | They upload the audio as a multipart body, which `NeuronHttpClient` refuses ({ref}`neuron-call-fails`). |
 | A workflow interrupt and resume | A resumed node runs again from its start and repeats whatever it did before the interrupt that was not memoized. |
 | `StdioTransport` for MCP, an `McpConnector` configured with `command` | `proc_open()` and blocking pipe reads. |
