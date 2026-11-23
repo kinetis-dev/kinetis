@@ -718,19 +718,26 @@ reaches this point: it is already omission, above.
 
 ### Rules about an uploaded file
 
-Two built-in rules describe a file, on a DTO field, on a `#[Each]` of an
-upload list, or on a direct controller parameter:
+Three built-in rules describe a file, on a DTO field, on a `#[Each]` of
+an upload list, or on a direct controller parameter:
 
 ```{code-block} php
-use Kinetis\Validation\Constraints\{FileExtension, FileSize};
+use Kinetis\Validation\Constraints\{FileExtension, FileMediaType, FileSize};
 
 #[Post('/scans')]
 public function scan(
     #[FileSize(maxBytes: 5_000_000, minBytes: 1)]
+    #[FileMediaType(['image/png', 'image/jpeg'])]
     #[FileExtension(['png', 'jpg'])]
     UploadedFileInterface $file,
 ): array
 ```
+
+Every rule on the field runs, in declaration order, and each failure
+reports its own violation in that order. Declare `#[FileSize]` before
+`#[FileMediaType]` so the size violation is listed first. A part over the
+size bound is still read by `#[FileMediaType]`; that read is bounded,
+because the part is already in memory under the request body limit.
 
 `#[FileSize]` bounds the size the part itself reported, inclusive on
 both ends. PSR-7 permits a null size, and a bound cannot be checked
@@ -738,8 +745,8 @@ against a size that does not exist, so such a file fails closed with
 `file_size_unknown` rather than passing unchecked.
 
 `#[FileExtension]` is a policy about the *client-supplied filename*, an
-untrusted label the server has not verified. It is not a MIME type and
-it is not sniffed content: a name ending in `.png` says nothing about
+untrusted label the server has not verified. It is not a media type and
+it is not detected content: a name ending in `.png` says nothing about
 the bytes behind it. A suffix is written without its leading dot and may
 contain dots of its own, so `png` and `tar.gz` are both declarable, and
 each matches the end of the name after the dot that separates it —
@@ -749,8 +756,40 @@ separating dot satisfies neither. Matching is ASCII case-insensitive, so
 the message and its `choices` parameter carry the declared suffixes,
 which the server wrote.
 
-Neither rule opens the file, and Kinetis validates no upload's contents
-anywhere: content checks belong where the content is read.
+`#[FileSize]` and `#[FileExtension]` never open the file.
+
+`#[FileMediaType]` reads the bytes. It detects the part's media type from
+its content with the host's libmagic, through `ext-fileinfo`, and
+compares it with the declared list; the client's `Content-Type` and
+filename play no part. Each declared entry is an exact `type/subtype` in
+RFC 6838's restricted-name grammar — no parameters, no wildcard, no
+whitespace — and matching is ASCII case-insensitive. A mismatch reports
+`file_media_type` with `choices`, the declared list, and `media_type`,
+the detected type:
+
+```{code-block} json
+{
+    "path": ["file"],
+    "code": "file_media_type",
+    "message": "must be one of these media types: image/png, image/jpeg.",
+    "parameters": {"choices": ["image/png", "image/jpeg"], "media_type": "image/gif"}
+}
+```
+
+The detected type is server-observed, so the violation may echo it. The
+rule reads the whole part, which the multipart parser already holds in
+memory under the request body limit, and rewinds the stream before and
+after reading it, so the handler receives the stream at offset 0. A
+stream that cannot be read, or a libmagic that returns no answer, throws
+instead of producing a violation.
+
+Detection is a content-signature check, not a safety proof. A polyglot
+file that is valid under two formats, script inside an SVG or HTML
+document, and a malformed body behind a valid signature all pass it.
+The detected names come from libmagic's own vocabulary, which can
+differ between libmagic versions — PHP's bundled copy and a system
+library, for instance — so test the declared list against fixture files
+on the PHP build the application deploys.
 
 ### Uploads in the generated document
 
@@ -801,12 +840,13 @@ to a client reading the generated document. Every rule lives in
 | `#[DateTime]` | an RFC 3339 `date-time` | *(no arguments)* | `date_time` | `format: date-time` |
 | `#[FileSize($max, $min)]` | an uploaded file's reported size, inclusive on both bounds | `int $maxBytes, int $minBytes = 0` | `file_too_large`, `file_too_small` | *(none)* |
 | `#[FileExtension($extensions)]` | an uploaded file's client filename ends in one of them | `array $extensions` | `file_extension` | *(none)* |
+| `#[FileMediaType($types)]` | an uploaded file's content is detected as one of them | `array $types` | `file_media_type` | *(none)* |
 
 `#[GreaterThan]`, `#[LessThan]`, `#[GreaterThanOrEqual]` and
 `#[LessThanOrEqual]` report `not_a_number`, `#[MultipleOf]` reports
 `not_an_integer`, `#[MinItems]`/`#[MaxItems]` report `not_a_list`, and
-`#[FileSize]`/`#[FileExtension]` report `not_a_file`, for a value of the
-wrong shape entirely. Through a request that never happens — the
+the three file rules report `not_a_file`, for a value of the wrong shape
+entirely. Through a request that never happens — the
 declared type is checked before any rule runs — but a rule invoked
 directly still answers rather than counting something with no count. The
 string rules have no such second code: `#[Email]`, `#[Url]`, `#[Uuid]`,
@@ -849,12 +889,13 @@ keyword carries `#[NotBlank]`'s trim-aware blank-string semantics —
 generated OpenAPI or MCP schema is broader than the check the request
 gets.
 
-`#[FileSize]` and `#[FileExtension]` publish nothing for a different
-reason: both describe a multipart part, which the document represents as
-`{"type": "string", "format": "binary"}`. JSON Schema's string keywords
-measure that string's own characters and say nothing about the bytes of
-the part or the name the client attached to it, so publishing one would
-state a rule the request is not checked against. Every other constraint
+`#[FileSize]`, `#[FileExtension]` and `#[FileMediaType]` publish nothing
+for a different reason: each describes a multipart part, which the
+document represents as `{"type": "string", "format": "binary"}`. JSON
+Schema's string keywords measure that string's own characters and say
+nothing about the bytes of the part, the name the client attached to it,
+or the type its content is detected as, so publishing one would state a
+rule the request is not checked against. Every other constraint
 in the table maps onto a keyword; see [OpenAPI
 generation](#openapi-generation).
 
@@ -871,7 +912,8 @@ publishing a `multipleOf` JSON Schema does not allow; an `#[In]` or
 non-finite member; a `#[FileSize]` with a negative bound or a minimum
 above its maximum; a `#[FileExtension]` set that is empty or keyed, or
 whose members are not alphanumeric suffixes written without a leading
-dot (`png`, `tar.gz`); and a `#[Regex]` pattern PCRE cannot compile,
+dot (`png`, `tar.gz`); a `#[FileMediaType]` set that is empty or keyed,
+or whose members are not exact `type/subtype` media types; and a `#[Regex]` pattern PCRE cannot compile,
 which left to run would match nothing and reject every value the field
 ever receives.
 

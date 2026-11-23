@@ -16,6 +16,9 @@ use RuntimeException;
  * ACL, and nothing S3 returned. The Flysystem exception wrapping it
  * already carries the path, and the rest is bucket content that has no
  * business in a log line.
+ *
+ * DirectUploads raises noCredentials() itself, outside any adapter call,
+ * when it has nothing to sign a POST policy with.
  */
 final class S3OperationException extends RuntimeException
 {
@@ -37,6 +40,13 @@ final class S3OperationException extends RuntimeException
     {
         return new self(
             'DeleteObjects reported per-key errors, so objects under the prefix are still there.',
+        );
+    }
+
+    public static function noCredentials(): self
+    {
+        return new self(
+            'No credentials resolved for this S3 connection, so an upload POST policy cannot be signed.',
         );
     }
 }

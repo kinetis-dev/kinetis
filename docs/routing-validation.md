@@ -372,7 +372,7 @@ apply to DTO fields, path parameters and query parameters alike:
 | Numbers | `GreaterThan`, `GreaterThanOrEqual`, `LessThan`, `LessThanOrEqual`, `MultipleOf` |
 | Choices | `In`, `NotIn` |
 | Lists | `MinItems`, `MaxItems` |
-| Uploaded files | `FileSize`, `FileExtension` |
+| Uploaded files | `FileSize`, `FileMediaType`, `FileExtension` |
 
 Stack constraints for a range: `#[GreaterThan(0)] #[LessThan(100)] int
 $percentage`. The declared PHP type is checked first, so a constraint
@@ -476,7 +476,7 @@ file control:
 
 ```{code-block} php
 use Kinetis\Http\Attributes\{Body, Post};
-use Kinetis\Validation\Constraints\{FileExtension, FileSize, NotBlank};
+use Kinetis\Validation\Constraints\{FileExtension, FileMediaType, FileSize, NotBlank};
 use Psr\Http\Message\UploadedFileInterface;
 
 final readonly class AvatarUploadRequest
@@ -485,6 +485,7 @@ final readonly class AvatarUploadRequest
         #[NotBlank]
         public string $displayName,
         #[FileSize(maxBytes: 1_000_000)]
+        #[FileMediaType(['image/png', 'image/jpeg'])]
         #[FileExtension(['png', 'jpg'])]
         public UploadedFileInterface $avatar,
     ) {}
@@ -498,11 +499,14 @@ public function upload(#[Body] AvatarUploadRequest $request): array
 ```
 
 ```{warning}
-`#[FileExtension]` checks the filename the client chose, and `#[FileSize]`
-the size the upload reported. Neither reads the file, and Kinetis never
-validates upload contents. Treat both the name and the bytes as untrusted:
-check the content where your code reads it, and do not use the client
-filename as a storage path.
+`#[FileSize]` checks the size the upload reported, and `#[FileExtension]`
+the filename the client chose. `#[FileMediaType]` detects the type from the
+bytes with libmagic, which is a signature check, not a safety proof: a
+polyglot file or script inside an SVG passes it. Treat the bytes as
+untrusted wherever your code reads them, and do not use the client
+filename as a storage path. The detection rules, ordering and limits are in
+[Rules about an uploaded
+file](appendix-routing-validation.md#rules-about-an-uploaded-file).
 ```
 
 ```{warning}
@@ -713,8 +717,8 @@ The document contains:
 - the method's return type as the default response, and each
   `#[Response]` as an additional status.
 
-`#[Regex]`, `#[NotBlank]`, `#[FileSize]` and `#[FileExtension]` have no
-JSON Schema equivalent. They are enforced, but not published, so the
+`#[Regex]`, `#[NotBlank]`, `#[FileSize]`, `#[FileExtension]` and
+`#[FileMediaType]` have no JSON Schema equivalent. They are enforced, but not published, so the
 document accepts more than the route does.
 
 `#[Hidden]` leaves a route out of the document without changing how it

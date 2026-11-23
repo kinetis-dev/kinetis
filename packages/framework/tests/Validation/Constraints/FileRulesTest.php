@@ -8,7 +8,10 @@ use InvalidArgumentException;
 use Kinetis\Tests\Fixtures\UnreadableUploadedFile;
 use Kinetis\Validation\Constraint;
 use Kinetis\Validation\Constraints\FileExtension;
+use Kinetis\Validation\Constraints\FileMediaType;
 use Kinetis\Validation\Constraints\FileSize;
+use Nyholm\Psr7\Stream;
+use Nyholm\Psr7\UploadedFile;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\StreamInterface;
@@ -16,10 +19,12 @@ use Psr\Http\Message\UploadedFileInterface;
 use RuntimeException;
 
 /**
- * The two rules that describe an uploaded file. Both read the part's
- * own metadata and nothing else, so every file here is one whose stream
- * throws: a rule that reached for content would fail with that
- * exception instead of answering.
+ * The rules that describe an uploaded file. #[FileSize] and
+ * #[FileExtension] read the part's own metadata and nothing else, so
+ * every file they are given here is one whose stream throws: a rule
+ * that reached for content would fail with that exception instead of
+ * answering. #[FileMediaType] reads the content, so its files carry
+ * real bytes.
  */
 final class FileRulesTest extends TestCase
 {
@@ -196,6 +201,96 @@ final class FileRulesTest extends TestCase
         self::assertStringNotContainsString('secret-report', $violation->message);
     }
 
+    // --- FileMediaType ---
+
+    private const string PNG = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89";
+    private const string JPEG = "\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9";
+    private const string PDF = "%PDF-1.4\n%%EOF\n";
+
+    /**
+     * A file shaped as the multipart parser builds one, over an
+     * in-memory stream at offset 0.
+     */
+    private static function upload(string $contents, string $filename, string $mediaType): UploadedFile
+    {
+        return new UploadedFile(Stream::create($contents), strlen($contents), UPLOAD_ERR_OK, $filename, $mediaType);
+    }
+
+    #[DataProvider('detectedContents')]
+    public function test_content_detected_as_a_declared_type_is_accepted(string $contents, string $type): void
+    {
+        $rule = new FileMediaType(['application/zip', $type]);
+
+        self::assertNull($rule->validate(self::upload($contents, 'upload.bin', 'application/octet-stream')));
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function detectedContents(): iterable
+    {
+        yield 'a PNG' => [self::PNG, 'image/png'];
+        yield 'a JPEG' => [self::JPEG, 'image/jpeg'];
+        yield 'a PDF' => [self::PDF, 'application/pdf'];
+    }
+
+    /**
+     * The client's filename and media type both say JPEG. The bytes are
+     * a PNG, and the rule answers from the bytes.
+     */
+    public function test_a_mislabelled_file_is_refused_with_the_detected_type(): void
+    {
+        $violation = new FileMediaType(['image/jpeg'])->validate(self::upload(self::PNG, 'photo.jpg', 'image/jpeg'));
+
+        self::assertNotNull($violation);
+        self::assertSame('file_media_type', $violation->code);
+        self::assertSame('must be one of these media types: image/jpeg.', $violation->message);
+        self::assertSame(['choices' => ['image/jpeg'], 'media_type' => 'image/png'], $violation->parameters);
+    }
+
+    public function test_a_declared_type_matches_regardless_of_ascii_case(): void
+    {
+        self::assertNull(new FileMediaType(['Image/PNG'])->validate(self::upload(self::PNG, 'a.png', 'image/png')));
+    }
+
+    /**
+     * The handler shares the stream instance the rule read, so the rule
+     * leaves it at offset 0 wherever it started. The large case crosses
+     * Nyholm's threshold for its in-memory string wrapper.
+     */
+    #[DataProvider('streamSizes')]
+    public function test_the_stream_is_left_rewound_for_the_handler(string $contents): void
+    {
+        $file = self::upload($contents, 'a.png', 'image/png');
+        $file->getStream()->seek(5);
+
+        self::assertNull(new FileMediaType(['image/png'])->validate($file));
+        self::assertSame(0, $file->getStream()->tell());
+        self::assertSame($contents, $file->getStream()->getContents());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function streamSizes(): iterable
+    {
+        yield 'a small part' => [self::PNG];
+        yield 'a part above 200000 bytes' => [self::PNG . str_repeat("\x00", 200_000)];
+    }
+
+    /**
+     * A stream that cannot be opened is a host or transport fault, not
+     * a property of the request, so it propagates rather than becoming
+     * a violation.
+     */
+    public function test_a_stream_that_cannot_be_opened_propagates(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('This uploaded file must never be opened.');
+
+        new FileMediaType(['image/png'])->validate(self::file(1, 'a.png'));
+    }
+
     // --- Definition errors ---
 
     /**
@@ -261,6 +356,42 @@ final class FileRulesTest extends TestCase
         ];
         yield 'a non-string token' => [
             static fn (): Constraint => new FileExtension([7]),
+            '7 given.',
+        ];
+        yield 'no media types at all' => [
+            static fn (): Constraint => new FileMediaType([]),
+            'FileMediaType types must be a non-empty list of strings.',
+        ];
+        yield 'keyed media types' => [
+            static fn (): Constraint => new FileMediaType(['image' => 'image/png']),
+            'FileMediaType types must be a non-empty list of strings.',
+        ];
+        yield 'a wildcard subtype' => [
+            static fn (): Constraint => new FileMediaType(['image/*']),
+            "'image/*' given.",
+        ];
+        yield 'a parameter' => [
+            static fn (): Constraint => new FileMediaType(['text/plain; charset=utf-8']),
+            "'text/plain; charset=utf-8' given.",
+        ];
+        yield 'no subtype' => [
+            static fn (): Constraint => new FileMediaType(['image']),
+            "'image' given.",
+        ];
+        yield 'an empty subtype' => [
+            static fn (): Constraint => new FileMediaType(['image/']),
+            "'image/' given.",
+        ];
+        yield 'surrounding whitespace' => [
+            static fn (): Constraint => new FileMediaType([' image/png']),
+            "' image/png' given.",
+        ];
+        yield 'a media type with a trailing newline' => [
+            static fn (): Constraint => new FileMediaType(["image/png\n"]),
+            'given.',
+        ];
+        yield 'a non-string media type' => [
+            static fn (): Constraint => new FileMediaType([7]),
             '7 given.',
         ];
     }

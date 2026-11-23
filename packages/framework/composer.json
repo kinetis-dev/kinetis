@@ -10,6 +10,7 @@
     ],
     "require": {
         "php": ">=8.4 <8.6",
+        "ext-fileinfo": "*",
         "nyholm/psr7": "^1.8.2",
         "nyholm/psr7-server": "^1.1.0",
         "psr/container": "^2.0.2",

@@ -47,6 +47,26 @@ $contents = $storage->read('avatars/user-42.png');
 $storage->delete('avatars/user-42.png');
 ```
 
+## Browser uploads
+
+A file too large to pass through a worker goes straight from the browser
+to the bucket. `DirectUploads` signs a POST policy for one object at the
+key the same connection's Filesystem addresses, so the application
+confirms the upload with `fileExists()` and `fileSize()`:
+
+```php
+use Kinetis\StorageS3\DirectUploads;
+
+$uploads = DirectUploads::fromConfig($config); // build once, in bootstrap.php
+
+$post = $uploads->authorize('staging/' . bin2hex(random_bytes(16)), maxBytes: 500_000_000);
+// The browser posts every $post->fields entry, then the file as `file`, to $post->url.
+```
+
+Bucket CORS and the lifecycle rule that removes unconfirmed uploads are
+the operator's to configure. Full guide:
+[kinetis.dev/docs/storage-s3.html](https://kinetis.dev/docs/storage-s3.html#upload-directly-from-the-browser).
+
 ## Configuration
 
 ```

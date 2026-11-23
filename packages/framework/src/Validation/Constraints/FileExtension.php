@@ -16,11 +16,11 @@ use Psr\Http\Message\UploadedFileInterface;
  *
  * This is a policy about an untrusted label, not about content. The
  * filename is written by the client and describes nothing the server
- * has verified: it is not a MIME type, it is not sniffed content, and a
- * name ending in `.png` says nothing about the bytes behind it. Use
- * this to keep an obvious mismatch out of a storage path or a
- * generated URL, and validate content — if content matters — where the
- * content is actually read.
+ * has verified: it is not a media type, it is not detected content,
+ * and a name ending in `.png` says nothing about the bytes behind it.
+ * Use this to keep an obvious mismatch out of a storage path or a
+ * generated URL, and {@see FileMediaType} when the content's type
+ * matters.
  *
  * A suffix is written without its leading dot, and may itself contain
  * dots: `png` and `tar.gz` are both declarable, and each is matched

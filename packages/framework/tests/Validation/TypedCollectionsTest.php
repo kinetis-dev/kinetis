@@ -22,6 +22,7 @@ use Kinetis\Tests\Validation\Fixtures\ListOfAnInterfaceRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfMixedRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfNothingRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfTheBackedEnumInterfaceRequest;
+use Kinetis\Tests\Validation\Fixtures\ListOfMediaTypedUploadsRequest;
 use Kinetis\Tests\Validation\Fixtures\ListOfUploadedFilesRequest;
 use Kinetis\Tests\Validation\Fixtures\ListPresenceRequest;
 use Kinetis\Tests\Validation\Fixtures\OrderItem;
@@ -732,6 +733,32 @@ final class TypedCollectionsTest extends TestCase
         } catch (ValidationException $e) {
             self::assertSame(['photos', 0], $e->violations[0]->path);
             self::assertSame('file_extension', $e->violations[0]->code);
+        }
+    }
+
+    /**
+     * The element rule answers from each element's bytes, so the second
+     * file is refused for being a PNG although its client metadata
+     * claims a PDF.
+     */
+    public function test_an_upload_list_runs_a_content_rule_on_every_element(): void
+    {
+        $pdf = "%PDF-1.4\n%%EOF\n";
+        $png = "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89";
+        $file = static fn (string $contents): UploadedFileInterface
+            => new UploadedFile(Stream::create($contents), strlen($contents), UPLOAD_ERR_OK, 'scan.pdf', 'application/pdf');
+
+        $dto = Hydrator::hydrate(ListOfMediaTypedUploadsRequest::class, ['scans' => [$file($pdf)]]);
+        self::assertCount(1, $dto->scans);
+
+        try {
+            Hydrator::hydrate(ListOfMediaTypedUploadsRequest::class, ['scans' => [$file($pdf), $file($png)]]);
+            self::fail('Expected the element rule to refuse the detected type.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['scans', 1], $e->violations[0]->path);
+            self::assertSame('file_media_type', $e->violations[0]->code);
+            self::assertSame('image/png', $e->violations[0]->parameters['media_type']);
         }
     }
 

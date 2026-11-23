@@ -9,6 +9,7 @@ use Kinetis\Validation\Constraints\Date;
 use Kinetis\Validation\Constraints\DateTime;
 use Kinetis\Validation\Constraints\Email;
 use Kinetis\Validation\Constraints\FileExtension;
+use Kinetis\Validation\Constraints\FileMediaType;
 use Kinetis\Validation\Constraints\FileSize;
 use Kinetis\Validation\Constraints\GreaterThan;
 use Kinetis\Validation\Constraints\GreaterThanOrEqual;
@@ -128,6 +129,13 @@ final class ConstraintCatalogueTest extends TestCase
             'must be an uploaded file.',
             [],
         ];
+        yield 'file media type, a non-file' => [
+            new FileMediaType(['image/png']),
+            'nope',
+            'not_a_file',
+            'must be an uploaded file.',
+            [],
+        ];
     }
 
     /**
@@ -216,12 +224,14 @@ final class ConstraintCatalogueTest extends TestCase
         // state a rule the request is not checked against.
         yield 'not blank' => [new NotBlank(), []];
         yield 'regex' => [new Regex('/^[A-Z]+$/'), []];
-        // #[FileSize] and #[FileExtension] are runtime-only for the
-        // same reason: both describe a multipart part, which a
-        // `{type: string, format: binary}` schema stands for without
-        // publishing its byte count or the name the client wrote.
+        // #[FileSize], #[FileExtension] and #[FileMediaType] are
+        // runtime-only for the same reason: each describes a multipart
+        // part, which a `{type: string, format: binary}` schema stands
+        // for without publishing its byte count, the name the client
+        // wrote, or the type its bytes are detected as.
         yield 'file size' => [new FileSize(10), []];
         yield 'file extension' => [new FileExtension(['png']), []];
+        yield 'file media type' => [new FileMediaType(['image/png']), []];
     }
 
     /**
