@@ -2,6 +2,16 @@
 
 Notable changes to `kinetis/framework`, newest first.
 
+## 1.31.0
+
+### Added
+
+- `#[FileMediaType(array $types)]` validates an uploaded file against exact `type/subtype` media types detected from its content by libmagic. A mismatch reports `file_media_type` with the declared `choices` and the detected `media_type`. The client's media type and filename are not consulted, and the stream is left rewound.
+
+### Changed
+
+- `kinetis/framework` requires `ext-fileinfo`.
+
 ## 1.30.0
 
 ### Added
