@@ -119,7 +119,7 @@ final class S3Client extends AsyncAwsS3Client
     public function signingRegion(): string
     {
         $configuration = $this->getConfiguration();
-        $region = $configuration->get(Configuration::OPTION_REGION);
+        $region = $configuration->get(Configuration::OPTION_REGION) ?? Configuration::DEFAULT_REGION;
 
         if (!$configuration->isDefault(Configuration::OPTION_ENDPOINT)) {
             return $region;
