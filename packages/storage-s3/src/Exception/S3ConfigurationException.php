@@ -8,7 +8,7 @@ use RuntimeException;
 
 /**
  * Configuration this package refuses to build a client from. Every one of
- * these is thrown while S3FilesystemFactory constructs, so a deployment
+ * these is thrown while S3Connection resolves a connection, so a deployment
  * that would send S3 traffic somewhere unintended, or in the clear, fails
  * at boot rather than on the first write.
  *
