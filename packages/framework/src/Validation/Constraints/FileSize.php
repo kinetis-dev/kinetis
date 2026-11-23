@@ -15,11 +15,9 @@ use Psr\Http\Message\UploadedFileInterface;
  * multipart part itself reported. Both bounds are inclusive.
  *
  * The size is the only thing this rule reads: it never opens the
- * stream, so a file too large for the bound is refused before anything
- * has read its contents. PSR-7 lets `getSize()` answer null when the
- * size is not knowable, and a bound cannot be checked against a size
- * that does not exist — such a file fails closed rather than passing
- * unchecked.
+ * stream. PSR-7 lets `getSize()` answer null when the size is not
+ * knowable, and a bound cannot be checked against a size that does not
+ * exist — such a file fails closed rather than passing unchecked.
  *
  * A negative bound, or a minimum above the maximum, is a definition
  * error refused at construction: no file could satisfy either, so the

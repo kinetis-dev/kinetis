@@ -134,37 +134,22 @@ storage key itself:
 
 ```{code-block} php
 use Kinetis\Http\Attributes\Post;
-use Kinetis\Http\Responses\ErrorResponse;
-use Kinetis\Validation\Constraints\FileSize;
+use Kinetis\Validation\Constraints\{FileMediaType, FileSize};
 use League\Flysystem\FilesystemOperator;
-use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\UploadedFileInterface;
 
 final readonly class AvatarController
 {
-    /** Accepted formats, keyed by the type detected from the content. */
-    private const array EXTENSIONS = [
-        'image/png' => 'png',
-        'image/jpeg' => 'jpg',
-    ];
-
     public function __construct(private FilesystemOperator $storage) {}
 
     #[Post('/avatars')]
     public function store(
         #[FileSize(maxBytes: 2_000_000, minBytes: 1)]
+        #[FileMediaType(['image/png', 'image/jpeg'])]
         UploadedFileInterface $avatar,
-    ): ResponseInterface|array {
-        $contents = (string) $avatar->getStream();
-        $detected = (new \finfo(\FILEINFO_MIME_TYPE))->buffer($contents);
-        $extension = self::EXTENSIONS[$detected] ?? null;
-
-        if ($extension === null) {
-            return ErrorResponse::create(422, 'The avatar must be a PNG or JPEG image.');
-        }
-
-        $path = 'avatars/' . bin2hex(random_bytes(16)) . '.' . $extension;
-        $this->storage->write($path, $contents);
+    ): array {
+        $path = 'avatars/' . bin2hex(random_bytes(16));
+        $this->storage->write($path, (string) $avatar->getStream());
 
         return ['path' => $path];
     }
@@ -175,11 +160,11 @@ final readonly class AvatarController
   before the handler runs (see {doc}`routing-validation`). The request
   body has already been received and staged, so `write()` with the
   contents is the direct call.
-- **Type.** `finfo` reads the content's signature.
-  `getClientMediaType()` repeats whatever the client sent and never
-  selects the stored format. `ext-fileinfo` is required by
-  `league/mime-type-detection`, a Flysystem dependency, so it is present
-  wherever this package is installed.
+- **Type.** `#[FileMediaType]` detects the type from the content and
+  refuses anything else with a `422`. `getClientMediaType()` repeats
+  whatever the client sent and never selects the stored format. What
+  detection does and does not establish is in [Rules about an uploaded
+  file](appendix-routing-validation.md#rules-about-an-uploaded-file).
 - **Name.** The key is generated. A client filename is never a path
   segment: it can collide with another user's object, name a dotfile, or
   carry a segment the path rules refuse. Keep the original name as data
@@ -302,6 +287,6 @@ against a real `FILESYSTEM_ROOT`.
   per-operation exception table, and S3 failure semantics.
 - {doc}`storage-s3` — the S3 driver.
 - {doc}`routing-validation` — `UploadedFileInterface` binding and the
-  `#[FileSize]` and `#[FileExtension]` rules.
+  `#[FileSize]`, `#[FileMediaType]` and `#[FileExtension]` rules.
 - {doc}`appendix-configuration` — every `FILESYSTEM_*` key and the
   named-connection convention.
