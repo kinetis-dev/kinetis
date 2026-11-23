@@ -156,7 +156,7 @@
   },
   "appendix-storage.html": {
    "canonical": "https://kinetis.dev/docs/appendix-storage.html",
-   "description": "The contracts behind Storage and Storage (S3): how the local driver runs, how a write is published, the path and symlink rules, the exception each operation reports, and S3’s failure and credential...",
+   "description": "The contracts behind Storage and Storage (S3): how the local driver runs, how a write is published, the path and symlink rules, the exception each operation reports, S3’s failure and credential sem...",
    "og:image": "https://kinetis.dev/docs/_static/og-image.png",
    "og:url": "https://kinetis.dev/docs/appendix-storage.html",
    "title": "Appendix: Storage Reference - Kinetis"
