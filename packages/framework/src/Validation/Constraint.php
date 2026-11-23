@@ -24,8 +24,10 @@ namespace Kinetis\Validation;
  *
  * A rule is constructed fresh for each validation or schema operation,
  * from the literal `{class, args}` descriptor a plan stores, and
- * discarded — so it must be pure: no I/O, no container, no request, no
- * global or static mutable state, nothing retained between calls.
+ * discarded — so it must be pure: no I/O beyond reading the value it is
+ * given (an upload rule may read and rewind the part's in-memory stream),
+ * no container, no request, no global or static mutable state, nothing
+ * retained between calls.
  * Throwing is a programmer error, not a client violation, and propagates
  * as an ordinary exception.
  */
