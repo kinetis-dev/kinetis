@@ -102,10 +102,156 @@ rejects.
 {doc}`appendix-storage` states the failure reporting and directory
 deletion contracts in full.
 
+(storage-s3-direct-uploads)=
+## Upload directly from the browser
+
+An ordinary upload is a request body, which the worker holds in memory
+up to `MAX_BODY_SIZE` (2 MiB by default, see {doc}`middleware`), and on
+AWS Lambda never exceeds the 6 MB invocation payload (see
+{doc}`runtime-adapters`). For larger files, the application signs a POST
+policy for one object, the browser sends the file straight to the
+bucket, and the application then confirms the object through the same
+`FilesystemOperator` it uses for everything else.
+
+`Kinetis\StorageS3\DirectUploads` signs the policy. It reads the same
+`FILESYSTEM_S3_*` keys as the filesystem connection of the same name,
+so it addresses the same bucket and prefix, and it holds no request
+state. Build it once in `bootstrap.php`:
+
+```{code-block} php
+:caption: bootstrap.php
+
+use Kinetis\Config\Config;
+use Kinetis\Container\AppScope;
+use Kinetis\StorageS3\DirectUploads;
+
+return static function (AppScope $app, Config $config): void {
+    $app->instance(DirectUploads::class, DirectUploads::fromConfig($config));
+};
+```
+
+`DirectUploads::fromConfig($config, 'media')` reads a named connection's
+`FILESYSTEM_MEDIA_S3_*` keys instead.
+
+The application chooses the key. The route below issues an upload under
+a generated name, bounded in size, with an exact type:
+
+```{code-block} php
+use Kinetis\Http\Attributes\Post;
+use Kinetis\StorageS3\DirectUploads;
+
+final readonly class VideoUploadController
+{
+    public function __construct(private DirectUploads $uploads) {}
+
+    #[Post('/video-uploads')]
+    public function authorize(): array
+    {
+        $path = 'staging/videos/' . bin2hex(random_bytes(16)) . '.mp4';
+        $post = $this->uploads->authorize(
+            $path,
+            maxBytes: 500_000_000,
+            expiresInSeconds: 900,
+            contentType: 'video/mp4',
+        );
+
+        // Record $path against the caller before returning it; the
+        // confirmation reads that record, never a path the browser sends.
+        return [
+            'url' => $post->url,
+            'fields' => $post->fields,
+            'expiresAt' => $post->expiresAt->format(DATE_ATOM),
+        ];
+    }
+}
+```
+
+{ref}`appendix-storage-s3-post-policy` lists every condition the policy
+carries, every field, and every argument `authorize()` refuses.
+
+### Send the form
+
+The browser posts `multipart/form-data` to `url`:
+
+- Send every entry of `fields` unchanged, under its own name.
+- Append the file last, as `file`, and add no other field. S3 refuses a
+  field the policy does not cover.
+- The fields other than the file are limited to 20 KB in total.
+- Success is `204 No Content`. A refusal is an XML error document:
+  `EntityTooLarge` for a size outside the range, `AccessDenied` for a
+  changed field or an expired policy.
+
+```{code-block} javascript
+const form = new FormData();
+for (const [name, value] of Object.entries(upload.fields)) {
+    form.append(name, value);
+}
+form.append('file', file);
+
+const response = await fetch(upload.url, { method: 'POST', body: form });
+```
+
+The bucket must allow the cross-origin POST. Configuring its CORS rule
+is the operator's job; this package never changes bucket settings. A
+minimal rule:
+
+```{code-block} json
+[
+    {
+        "AllowedOrigins": ["https://app.example.com"],
+        "AllowedMethods": ["POST"],
+        "AllowedHeaders": ["*"]
+    }
+]
+```
+
+### Confirm the upload
+
+Issue uploads under a staging prefix, such as `staging/`, and give the
+bucket a lifecycle rule that expires objects under it after a day, so an
+upload that is never confirmed is removed by S3. Include
+`FILESYSTEM_S3_PREFIX` in the rule's prefix when one is set.
+
+When the browser reports success, confirm the path recorded for that
+caller, then move the object out of staging:
+
+```{code-block} php
+use Kinetis\Http\Responses\ErrorResponse;
+
+// $path is the path this application issued and recorded for the caller.
+if (!$storage->fileExists($path)) {
+    return ErrorResponse::create(409, 'The upload has not arrived.');
+}
+
+$size = $storage->fileSize($path); // within the authorized range
+$storage->move($path, 'videos/' . basename($path));
+```
+
+- `fileExists()` reads `403 Forbidden` as absence; see
+  [Permissions and uncertain outcomes](#permissions-and-uncertain-outcomes).
+- `mimeType()` returns the `Content-Type` the browser sent, pinned by the
+  policy when `authorize()` was given one. It is not a check of the
+  content; inspect the object before trusting its format.
+- Until the policy expires, the browser can post again to the same key
+  and replace the object, so confirm, then move it.
+
+### Local development
+
+The worker and the browser both reach `FILESYSTEM_S3_ENDPOINT`: the
+worker confirms uploads through it, and the browser posts to the `url`
+built from it. A
+Compose service name such as `minio` resolves only inside the Compose
+network, so choose a host name that resolves to the storage service for
+both, and publish its port.
+
+LocalStack enforces the size range, the exact conditions and the expiry,
+but checks neither the signature nor extra fields. A form that works
+against it can still be refused by S3.
+
 ## See also
 
 - {doc}`storage` — using the filesystem, uploads, named connections and
   common errors.
 - {doc}`appendix-storage` — S3 failure, deletion and credential
-  semantics.
+  semantics, and the browser upload policy.
 - {doc}`appendix-configuration` — every `FILESYSTEM_S3_*` key.

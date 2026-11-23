@@ -215,7 +215,11 @@ rather than which form it took.
 - **`localstack`** (LocalStack: SQS + S3) — `SqsQueue`: push/pop/ack/
   release/fail, `maxAttempts`, priority queues; `S3FilesystemFactory`:
   write/read/exists/list/copy/move/delete/deleteDirectory over the
-  plain-HTTP endpoint its opt-in covers.
+  plain-HTTP endpoint its opt-in covers; `DirectUploads`: a multipart
+  POST read back through the same prefixed connection, and an
+  over-range body and a tampered key refused. LocalStack does not
+  verify a POST signature, so the signature rests on the unit suite's
+  AWS test vector.
 - **`redis-cluster`** (`grokzen/redis-cluster`, 3 masters + 3 replicas) —
   `kinetis/redis`'s `ClusterClient`: keys routed to the master that owns
   them, `nodes()` against the live topology, and forced migrations

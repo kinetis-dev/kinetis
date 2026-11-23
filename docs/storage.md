@@ -175,6 +175,11 @@ file harmless. Keep uploads out of any directory a web server executes
 or serves directly, and re-encode images before showing them to other
 users.
 
+A file larger than `MAX_BODY_SIZE`, or than the Lambda payload, never
+reaches this route. On S3, the browser can send it straight to the
+bucket under a policy the application signs; see
+{ref}`storage-s3-direct-uploads`.
+
 ## Local disk or S3
 
 Use `local` when every worker serving the application runs on one host

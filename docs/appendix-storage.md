@@ -2,8 +2,8 @@
 
 The contracts behind {doc}`storage` and {doc}`storage-s3`: how the local
 driver runs, how a write is published, the path and symlink rules, the
-exception each operation reports, and S3's failure and credential
-semantics. For the task-first path — configuration, injection, uploads
+exception each operation reports, S3's failure and credential
+semantics, and the S3 browser upload policy. For the task-first path — configuration, injection, uploads
 and the rules application code acts on — see {doc}`storage`.
 
 ## The local driver
@@ -443,10 +443,75 @@ having failed, so the next call runs every provider again — an instance
 role, a container credential endpoint or a token file can appear after
 a worker has started.
 
+(appendix-storage-s3-post-policy)=
+## S3 browser upload policy
+
+`Kinetis\StorageS3\DirectUploads::authorize(string $path, int $maxBytes,
+int $expiresInSeconds = 900, ?string $contentType = null)` returns a
+`PresignedPost`: the form's `url`, its `fields`, and `expiresAt`.
+
+**Key.** The path is normalized and prefixed with
+`FILESYSTEM_S3_PREFIX` exactly as the Filesystem on the same connection
+normalizes and prefixes it, so `fileExists($path)` addresses the
+uploaded object. Flysystem's `WhitespacePathNormalizer` drops empty and
+`.` segments and resolves `a/../b` to `b`; a path that climbs above the
+root throws `League\Flysystem\PathTraversalDetected` and a control
+character throws `CorruptedPathDetected`. A path that
+normalizes to the root, or holds `${filename}`, which S3 would replace
+with the browser's file name, throws `InvalidArgumentException`.
+
+**Conditions.** The policy carries these conditions and no others:
+
+| Condition | Value |
+|---|---|
+| `bucket` | The connection's bucket. |
+| `key` | The prefixed key, matched exactly. |
+| `content-length-range` | `1` to `$maxBytes`. An empty file is refused. |
+| `x-amz-algorithm` | `AWS4-HMAC-SHA256`. |
+| `x-amz-credential` | `<access key id>/<yyyymmdd>/<region>/s3/aws4_request`. |
+| `x-amz-date` | The signing time, `yyyymmddThhmmssZ`. |
+| `x-amz-security-token` | The session token, present only with temporary credentials. |
+| `Content-Type` | `$contentType`, matched exactly, present only when given. |
+
+Without `$contentType` the policy covers no `Content-Type` field, so the
+form cannot send one. `$maxBytes` below 1 throws
+`InvalidArgumentException`; S3 itself accepts at most 5 GB in one POST.
+A `$contentType` that is empty, holds a control character or is not
+valid UTF-8 throws `InvalidArgumentException`.
+
+**Expiry.** `$expiresInSeconds` must be 1 to 3600, or
+`InvalidArgumentException` is thrown. The policy expires at the signing
+time plus `$expiresInSeconds`, or when the credentials expire if that is
+earlier, truncated to the second; `expiresAt` reports that time. Until
+then the same form can be posted again, and each post replaces the
+object at the key.
+
+**Fields.** `fields` holds exactly `key`, `x-amz-algorithm`,
+`x-amz-credential`, `x-amz-date`, `x-amz-security-token` (temporary
+credentials only), `Content-Type` (when given), `policy` (the
+base64-encoded JSON policy) and `x-amz-signature`. No
+`success_action_status` is sent, so S3 answers a successful post with
+`204`. AWS refuses a post that carries any other field, except `file`.
+
+**Signature.** `x-amz-signature` is the hex HMAC-SHA256 of the
+base64-encoded policy under the SigV4 signing key derived from the
+secret key, the signing date, the region and `s3`. The secret key is
+used only to derive that key and never appears in the result. The access
+key id and the session token do, since S3 needs both to verify the post.
+
+**Credentials and destination.** Each call resolves credentials through
+the connection's own provider, as described in "S3 credential
+resolution" above, which may suspend the calling Fiber. No credentials
+throws `Kinetis\StorageS3\Exception\S3OperationException`. The region in
+the credential scope is the one the connection's client signs with,
+which for an AsyncAws pseudo-region such as `fips-us-east-1` is the
+region it names. `url` is the bucket URL the client itself addresses,
+virtual-hosted or path-style by the same rule, and ends in `/`.
+
 ## See also
 
 - {doc}`storage` — the task-first guide.
-- {doc}`storage-s3` — S3 configuration.
+- {doc}`storage-s3` — S3 configuration and browser uploads.
 - {doc}`appendix-configuration` — every `FILESYSTEM_*` key.
 - {doc}`appendix-packages` — `Kinetis\Storage` and `Kinetis\StorageS3`
   in the package map.
