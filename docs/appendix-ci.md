@@ -145,7 +145,7 @@ rather than which form it took.
   conflicting row is gone, and two writers replacing one versioned
   owner's membership, where the second conflicts on that owner's version
   rather than merging into the first's.
-- **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
+- **`queue-redis`** (Redis 8) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two
   byte-identical payloads staying two jobs, a killed worker's lease
@@ -171,7 +171,7 @@ rather than which form it took.
   replacement. Its own dedicated job, never sharing a process with
   anything else.
 - **`persistence-and-cache-redis`** (MySQL 9.7, MariaDB 11.4, Postgres 18,
-  Redis 7) — `kinetis/persistence`'s `TransactionGuard`: commit/
+  Redis 8) — `kinetis/persistence`'s `TransactionGuard`: commit/
   rollback/`rollbackDangling()`; `kinetis/cache-redis`'s
   `RedisSimpleCache`: the full PSR-16 surface, TTL expiry, and the
   conditional `replace()`; `kinetis/session`'s `SqlSessionStore` and
