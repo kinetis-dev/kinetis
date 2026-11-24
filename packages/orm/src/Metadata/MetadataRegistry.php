@@ -46,7 +46,9 @@ use ReflectionProperty;
  * A property declared exactly DateTimeImmutable, nullable or not, has the
  * type timestamp; DateTime, DateTimeInterface and subclasses of
  * DateTimeImmutable are refused as declared types. A property declared
- * exactly Kinetis\Orm\Date, nullable or not, has the type date.
+ * exactly Kinetis\Orm\Date, nullable or not, has the type date. A property
+ * declared array, nullable or not, has the type json unless #[HasMany] or
+ * #[ManyToMany] makes it a relationship collection.
  *
  * Every entity lives on one named connection, `default` unless #[Entity]
  * names another, and a relationship of any kind joins two entities of the
@@ -56,11 +58,11 @@ use ReflectionProperty;
  * target. Each entity class is the target of at most one of them, so one
  * mapping alone decides how a row is discovered, removed and orphaned.
  *
- * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
+ * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @phpstan-type JoinMapping array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
  * @phpstan-type EntityMapping array{class: class-string, table: string, connection: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
- * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
+ * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @psalm-type JoinMapping = array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
  * @psalm-type EntityMapping = array{class: class-string, table: string, connection: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
@@ -522,6 +524,8 @@ final readonly class MetadataRegistry
             $scalar = 'timestamp';
         } elseif ($typeName === Date::class) {
             $scalar = 'date';
+        } elseif ($typeName === 'array') {
+            $scalar = 'json';
         } elseif (!$type->isBuiltin() && is_subclass_of($typeName, BackedEnum::class)) {
             $enum = $typeName;
             $scalar = new ReflectionEnum($typeName)->getBackingType()?->getName() === 'int' ? 'int' : 'string';
@@ -529,7 +533,7 @@ final readonly class MetadataRegistry
             throw MappingException::unsupportedProperty(
                 $class,
                 $name,
-                "declares {$typeName}, which is not string, int, float, bool, DateTimeImmutable, " . Date::class . ' or a backed enum',
+                "declares {$typeName}, which is not string, int, float, bool, array, DateTimeImmutable, " . Date::class . ' or a backed enum',
             );
         }
 
@@ -539,7 +543,7 @@ final readonly class MetadataRegistry
             throw MappingException::invalidColumn($class, $name, $column);
         }
 
-        /** @var 'string'|'int'|'float'|'bool'|'timestamp'|'date' $scalar */
+        /** @var 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json' $scalar */
         return ['name' => $name, 'column' => $column, 'type' => $scalar, 'nullable' => $type->allowsNull(), 'enum' => $enum, 'target' => null];
     }
 

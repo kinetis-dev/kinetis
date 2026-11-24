@@ -158,7 +158,7 @@ new Query($db)
     ->delete();
 ```
 
-MySQL 8.4 rejects an `UPDATE` or `DELETE` whose subquery reads the table
+MySQL 9.7 rejects an `UPDATE` or `DELETE` whose subquery reads the table
 being changed (error 1093); MariaDB and PostgreSQL accept it.
 
 ### `IN`
@@ -384,7 +384,7 @@ column in either that is not inserted.
 ### Upsert on MySQL and MariaDB
 
 - The shared spelling is `VALUES(col)`. MariaDB has no `INSERT ... AS`
-  row alias, and MySQL 8.4 runs `VALUES(col)` with deprecation warning
+  row alias, and MySQL 9.7 runs `VALUES(col)` with deprecation warning
   1287.
 - A conflict on any unique key of the table triggers the update;
   `$uniqueBy` is validated but does not reach the SQL. PostgreSQL updates
@@ -413,7 +413,7 @@ transaction (see {doc}`appendix-database`).
 (query-builder-reference-dialects)=
 ## Dialect spellings
 
-| Feature | MySQL 8.4 and MariaDB 11.4 | PostgreSQL 16 |
+| Feature | MySQL 9.7 and MariaDB 11.4 | PostgreSQL 18 |
 | --- | --- | --- |
 | Identifier quoting | `` `name` `` | `"name"` |
 | `offset()` without `limit()` | `LIMIT 18446744073709551615 OFFSET n` | `OFFSET n` |

@@ -35,6 +35,7 @@ use Kinetis\Orm\Tests\Fixtures\Profile;
 use Kinetis\Orm\Tests\Fixtures\Ribbon;
 use Kinetis\Orm\Tests\Fixtures\Seal;
 use Kinetis\Orm\Tests\Fixtures\Stamp;
+use Kinetis\Orm\Tests\Fixtures\Survey;
 use Kinetis\Orm\Tests\Fixtures\Ticket;
 use Kinetis\Orm\Tests\Fixtures\Topic;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -160,6 +161,21 @@ final class MetadataRegistryTest extends TestCase
                 ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                 ['name' => 'arrivesOn', 'column' => 'arrives_on', 'type' => 'date', 'nullable' => false, 'enum' => null, 'target' => null],
                 ['name' => 'cancelledOn', 'column' => 'cancelled_on', 'type' => 'date', 'nullable' => true, 'enum' => null, 'target' => null],
+            ],
+            $data['entities'][0]['properties'],
+        );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_an_array_property_is_recorded_as_json_and_round_trips(): void
+    {
+        $data = MetadataRegistry::fromClasses([Survey::class])->toArray();
+
+        self::assertSame(
+            [
+                ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'answers', 'column' => 'answers', 'type' => 'json', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'extra', 'column' => 'extra_data', 'type' => 'json', 'nullable' => true, 'enum' => null, 'target' => null],
             ],
             $data['entities'][0]['properties'],
         );
@@ -365,8 +381,10 @@ final class MetadataRegistryTest extends TestCase
         yield 'an untyped property' => [self::INVALID . 'UntypedProperty', 'UntypedProperty::$name cannot be mapped: it has no type'];
         yield 'a union type' => [self::INVALID . 'UnionProperty', 'UnionProperty::$code cannot be mapped: it declares the composite type'];
         yield 'an intersection type' => [self::INVALID . 'IntersectionProperty', 'IntersectionProperty::$items cannot be mapped: it declares the composite type'];
-        yield 'an array' => [self::INVALID . 'ArrayProperty', 'ArrayProperty::$tags cannot be mapped: it declares array'];
-        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
+        yield 'a json identifier' => [self::INVALID . 'ArrayIdentifier', 'ArrayIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
+        yield 'a json version' => [self::INVALID . 'ArrayVersion', 'ArrayVersion has no usable version: the version property "version" must be typed int'];
+        yield 'a relationship typed array' => [self::INVALID . 'ArrayRelationship', 'ArrayRelationship::$tags is not a usable #[BelongsTo] relationship: it declares array, which is not an entity class'];
+        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, array, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
         yield 'a DateTimeInterface' => [self::INVALID . 'DateInterfaceProperty', 'DateInterfaceProperty::$publishedAt cannot be mapped: it declares DateTimeInterface, which'];
         yield 'a DateTimeImmutable subclass' => [self::INVALID . 'DateSubclassProperty', 'DateSubclassProperty::$publishedAt cannot be mapped: it declares ' . self::INVALID . 'LocalDate, which'];
         yield 'a timestamp identifier' => [self::INVALID . 'TimestampIdentifier', 'TimestampIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];

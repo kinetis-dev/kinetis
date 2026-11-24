@@ -9,6 +9,7 @@ use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
 use InvalidArgumentException;
+use JsonException;
 use Kinetis\Orm\Exception\InvalidEntityStateException;
 use Kinetis\Orm\Exception\MappingException;
 use Kinetis\Orm\Flush\Reference;
@@ -28,15 +29,20 @@ use ReflectionProperty;
  * type's rule; a timestamp is a DateTimeImmutable in any zone or a UTC
  * "Y-m-d H:i:s" string with up to six fraction digits, in UTC years 0001 to
  * 9999, and a string loads as a DateTimeImmutable in UTC; a date is a Date
- * or its exact "Y-m-d" string, and a string loads as a Date; null only
- * where the property type allows it.
+ * or its exact "Y-m-d" string, and a string loads as a Date; a json value
+ * is an array whose leaves are null, bool, int, finite float or UTF-8
+ * string, nested no deeper than json_decode() reads at depth 512, or the
+ * JSON text of one, and a string loads decoded; null only where the
+ * property type allows it.
  *
  * A database value is a converted value with a backed enum replaced by its
- * backing value, a DateTimeImmutable by its UTC "Y-m-d H:i:s.u" string and
- * a Date by its "Y-m-d" string. Predicate parameters, cursors, snapshots
- * and written rows all use it, so a loaded value and the same value read
- * back from the entity compare identical, and one instant has one database
- * value in every zone.
+ * backing value, a DateTimeImmutable by its UTC "Y-m-d H:i:s.u" string, a
+ * Date by its "Y-m-d" string and a json array by its JSON encoding.
+ * Predicate parameters, cursors, snapshots and written rows all use it, so
+ * a loaded value and the same value read back from the entity compare
+ * identical, one instant has one database value in every zone, and a json
+ * column the server stores respaced or reordered compares by its decoded
+ * value.
  *
  * A #[BelongsTo] property is one of the mapped properties, over its
  * foreign-key column. Its converted and database value is the target's
@@ -65,6 +71,14 @@ final class EntityPlan
      * pattern refuses it.
      */
     private const string TIMESTAMP = '/^(?!0000)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D';
+
+    /**
+     * json_decode()'s depth: it counts the scalar level too, so it reads
+     * one array level fewer, which bounds the arrays a json value admits.
+     */
+    private const int JSON_DEPTH = 512;
+
+    private const int JSON_ENCODE = JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION;
 
     /** @var class-string<T> */
     public readonly string $class;
@@ -157,10 +171,18 @@ final class EntityPlan
         return array_column($this->properties, 'column');
     }
 
-    /** @throws MappingException for a property this entity does not map, or one that maps no column */
+    /**
+     * The column a predicate, order or cursor on $property names.
+     *
+     * @throws MappingException for a property this entity does not map, one that maps no column, or a json property
+     */
     public function column(string $property): string
     {
-        return $this->property($property)['column'];
+        $mapping = $this->property($property);
+
+        return $mapping['type'] === 'json'
+            ? throw MappingException::jsonColumn($this->class, $property)
+            : $mapping['column'];
     }
 
     /**
@@ -503,6 +525,7 @@ final class EntityPlan
             'bool' => self::bool($value),
             'timestamp' => self::timestamp($value),
             'date' => self::date($value),
+            'json' => self::json($value),
         };
 
         if ($converted === null) {
@@ -534,11 +557,12 @@ final class EntityPlan
 
     private static function databaseValue(mixed $converted): null|bool|int|float|string
     {
-        /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable|Date $converted */
+        /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable|Date|array<array-key, mixed> $converted */
         return match (true) {
             $converted instanceof BackedEnum => $converted->value,
             $converted instanceof DateTimeImmutable => self::utc($converted),
             $converted instanceof Date => (string) $converted,
+            is_array($converted) => json_encode($converted, self::JSON_ENCODE),
             default => $converted,
         };
     }
@@ -618,6 +642,56 @@ final class EntityPlan
         }
     }
 
+    /**
+     * A string is JSON text, decoded into an array or refused; the array
+     * either way is admitted only when json_encode() writes it and
+     * json_decode() reads it back, so databaseValue() cannot fail on it.
+     *
+     * @return array<array-key, mixed>|null
+     */
+    private static function json(mixed $value): ?array
+    {
+        if (is_string($value)) {
+            try {
+                $value = json_decode($value, true, self::JSON_DEPTH, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                return null;
+            }
+        }
+
+        return is_array($value) && self::jsonArray($value, self::JSON_DEPTH - 1) ? $value : null;
+    }
+
+    /**
+     * Whether every key of $array and its nested arrays is an int or a
+     * UTF-8 string, every leaf is null, a bool, an int, a finite float or
+     * a UTF-8 string, and the nesting is at most $levels arrays deep.
+     *
+     * @param array<array-key, mixed> $array
+     */
+    private static function jsonArray(array $array, int $levels): bool
+    {
+        if ($levels < 1) {
+            return false;
+        }
+
+        foreach ($array as $key => $value) {
+            $admitted = (is_int($key) || preg_match('//u', $key) === 1) && match (true) {
+                $value === null, is_bool($value), is_int($value) => true,
+                is_float($value) => is_finite($value),
+                is_string($value) => preg_match('//u', $value) === 1,
+                is_array($value) => self::jsonArray($value, $levels - 1),
+                default => false,
+            };
+
+            if (!$admitted) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static function utc(DateTimeImmutable $value): string
     {
         return $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
@@ -635,6 +709,8 @@ final class EntityPlan
             'bool' => 'a bool, 0, 1, "0" or "1"',
             'timestamp' => 'a DateTimeImmutable, or a UTC "Y-m-d H:i:s" string with up to six fraction digits and no offset, in UTC years 0001 to 9999',
             'date' => 'a ' . Date::class . ', or a "Y-m-d" string naming a day that exists in years 0001 to 9999',
+            'json' => 'an array of null, bool, int, finite float, UTF-8 string and nested array values at most '
+                . (self::JSON_DEPTH - 1) . ' levels deep, or the JSON text of one',
         };
 
         if ($property['enum'] !== null) {

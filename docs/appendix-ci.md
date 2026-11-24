@@ -97,7 +97,7 @@ again under coverage in `sonarqube.yml`. `query-builder` uses both forms; the co
 suites are the second. The entries below name what each job covers
 rather than which form it took.
 
-- **`query-builder`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
+- **`query-builder`** (MySQL 9.7, MariaDB 11.4, Postgres 18) —
   `Query::get()`/`first()`/`count()`/`insertGetId()`/`update()`/
   `delete()`/`join()`/`paginate()`/`cursorPaginate()`, the null
   predicate forms (`IS NULL`/`IS NOT NULL`), and the SQL whose acceptance
@@ -107,7 +107,7 @@ rather than which form it took.
   wait modes under contention, the MySQL-family limited `IN` refusal,
   correlated subqueries with arithmetic writes, and a `RowValues` round
   trip into a DTO.
-- **`orm`** (MySQL 8.4, MariaDB 11.4, Postgres 16) — entity reads and
+- **`orm`** (MySQL 9.7, MariaDB 11.4, Postgres 18) — entity reads and
   flushes through each family's native and PDO driver: every mapped type
   from that driver's own row spelling, converted predicates, one identity
   shared by `find()`, `get()`, `paginate()` and `cursorPaginate()`, a UUID
@@ -145,16 +145,16 @@ rather than which form it took.
   conflicting row is gone, and two writers replacing one versioned
   owner's membership, where the second conflicts on that owner's version
   rather than merging into the first's.
-- **`queue-redis`** (Redis 7) — `RedisQueue`: push/pop/ack/release/fail,
+- **`queue-redis`** (Redis 8) — `RedisQueue`: push/pop/ack/release/fail,
   attempts, priority queues, plus four dedicated scripts beside the main
   one — ten concurrent processes racing for one delayed job, two
   byte-identical payloads staying two jobs, a killed worker's lease
   reclaimed and redelivered, and delayed promotion staying inside its
   batch bound.
-- **`queue-sql`** (MySQL 8.4, MariaDB 11.4) — `SqlQueue`: the same
+- **`queue-sql`** (MySQL 9.7, MariaDB 11.4) — `SqlQueue`: the same
   push/pop/ack/release/fail surface over `FOR UPDATE SKIP LOCKED`,
   reservation tokens, and priority ordering.
-- **`queue-failed-jobs`** (MySQL 8.4 or MariaDB 11.4, plus Postgres 16)
+- **`queue-failed-jobs`** (MySQL 9.7 or MariaDB 11.4, plus Postgres 18)
   — `SqlFailedJobStore` over the shipped migration stubs on both
   engines: record/find/list/forget/prune, keyset paging across records
   failed in the same second, the connection and queue filters, and the
@@ -170,8 +170,8 @@ rather than which form it took.
   `release()` leaving a job unacked when the broker doesn't confirm the
   replacement. Its own dedicated job, never sharing a process with
   anything else.
-- **`persistence-and-cache-redis`** (MySQL 8.4, MariaDB 11.4, Postgres 16,
-  Redis 7) — `kinetis/persistence`'s `TransactionGuard`: commit/
+- **`persistence-and-cache-redis`** (MySQL 9.7, MariaDB 11.4, Postgres 18,
+  Redis 8) — `kinetis/persistence`'s `TransactionGuard`: commit/
   rollback/`rollbackDangling()`; `kinetis/cache-redis`'s
   `RedisSimpleCache`: the full PSR-16 surface, TTL expiry, and the
   conditional `replace()`; `kinetis/session`'s `SqlSessionStore` and
@@ -205,7 +205,7 @@ rather than which form it took.
   opt-in belong to `kinetis/search`'s transport and are covered by the
   `search-opensearch` job's self-signed cluster rather than a second
   time here.
-- **`migrations`** (MySQL 8.4, MariaDB 11.4, Postgres 16) —
+- **`migrations`** (MySQL 9.7, MariaDB 11.4, Postgres 18) —
   `MigrationRunner`/`SqlMigrationRepository`: migrate/status/rollback
   against a real fixture migration file, and the
   `migrate`/`migrate:status`/`migrate:rollback` commands run the way `bin/kinetis`
@@ -266,7 +266,7 @@ rather than which form it took.
   skipped. It is disclosed in `RoadRunnerAdapter`'s own docblock and
   {doc}`runtime-adapters`.
 - **`orm-runtime`** (matrix: a `dunglas/frankenphp` worker; `php:8.4.27-fpm-alpine`
-  behind `nginx:alpine`; MySQL 8.4 as a service) — `kinetis/database-bridge`'s
+  behind `nginx:alpine`; MySQL 9.7 as a service) — `kinetis/database-bridge`'s
   `OrmWorkerSequenceTest` against `tests/Fixtures/OrmWorker/index.php`,
   which puts the bridge's `PackageBootstrap` behind a `Kernel` under the
   detected adapter. The first request loads a row through its

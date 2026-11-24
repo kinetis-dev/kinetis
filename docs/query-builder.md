@@ -9,7 +9,7 @@ composer require kinetis/query-builder
 ````
 
 A parameterized SQL builder over the connections {doc}`persistence` sets
-up. It compiles the SQL that MySQL 8.4, MariaDB 11.4 and PostgreSQL 16
+up. It compiles the SQL that MySQL 9.7, MariaDB 11.4 and PostgreSQL 18
 share, runs it on the connection or transaction you pass in, and maps
 rows into typed DTOs. Anything outside that shared surface stays
 available as raw SQL on the same connection.
