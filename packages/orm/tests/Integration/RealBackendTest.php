@@ -28,6 +28,7 @@ use Kinetis\Orm\Tests\Fixtures\StoredItem;
 use Kinetis\Orm\Tests\Fixtures\StoredManifest;
 use Kinetis\Orm\Tests\Fixtures\StoredOrganization;
 use Kinetis\Orm\Tests\Fixtures\StoredParcel;
+use Kinetis\Orm\Tests\Fixtures\StoredPayload;
 use Kinetis\Orm\Tests\Fixtures\StoredPost;
 use Kinetis\Orm\Tests\Fixtures\StoredProfile;
 use Kinetis\Orm\Tests\Fixtures\StoredRibbon;
@@ -45,6 +46,7 @@ use Kinetis\QueryBuilder\Query;
 use Kinetis\QueueSql\SqlQueue;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use stdClass;
 
 /**
  * Entity reads, relationships, flushes and transaction sessions against real
@@ -661,6 +663,82 @@ final class RealBackendTest extends TestCase
     }
 
     /**
+     * A JSON object loads as a stdClass and a list as an array at every
+     * depth, so {} and [] stay distinct through jsonb, json and the MySQL
+     * family's JSON alike. body and document are jsonb on PostgreSQL, meta
+     * and draft json.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_json_objects_round_trip_as_stdclass_and_stay_distinct_from_lists(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $objects = [
+            new stdClass(),
+            (object) ['a' => new stdClass()],
+            (object) ['b' => 1, 'a' => 'é/ü', 'f' => 1.0, 'n' => null, 't' => true],
+            (object) ['l' => [new stdClass(), [], [(object) ['x' => []]]], 'o' => (object) ['l' => [1, new stdClass()]]],
+        ];
+        $documents = [...$objects, [], [1, 'a', null], [new stdClass(), [[]], (object) ['a' => [new stdClass()]]]];
+        $entities = $factory->open();
+
+        foreach ($documents as $i => $document) {
+            $payload = new StoredPayload();
+            $payload->id = $i + 1;
+            $payload->body = $objects[$i % count($objects)];
+            $payload->meta = $objects[$i % count($objects)];
+            $payload->document = $document;
+            $payload->draft = $document;
+            $entities->persist($payload);
+        }
+
+        $entities->flush();
+        $entities = $factory->open();
+
+        foreach ($documents as $i => $document) {
+            $loaded = $entities->repository(StoredPayload::class)->findOrFail($i + 1);
+            $object = self::canonical($objects[$i % count($objects)]);
+            $document = self::canonical($document);
+
+            foreach (['body' => $object, 'meta' => $object, 'document' => $document, 'draft' => $document] as $property => $expected) {
+                $actual = self::canonical($loaded->{$property});
+                self::assertEquals($expected, $actual, "row {$i}, {$property}");
+                self::assertSame(json_encode($expected), json_encode($actual), "row {$i}, {$property}");
+            }
+        }
+
+        $first = $entities->repository(StoredPayload::class)->findOrFail(1);
+        $first->document = [];
+        $first->draft = [];
+        $second = $entities->repository(StoredPayload::class)->findOrFail(2);
+        self::assertInstanceOf(stdClass::class, $second->meta);
+        $second->meta->a->z = 1;
+        $entities->flush();
+
+        $first = $factory->open()->repository(StoredPayload::class)->findOrFail(1);
+        self::assertSame(['{}', '{}', '[]', '[]'], array_map(json_encode(...), [$first->body, $first->meta, $first->document, $first->draft]));
+        self::assertSame('{"a":{"z":1}}', json_encode($factory->open()->repository(StoredPayload::class)->findOrFail(2)->meta));
+    }
+
+    /**
+     * $value with every stdClass's properties in key order: jsonb and the
+     * MySQL family keep their own key order.
+     */
+    private static function canonical(mixed $value): mixed
+    {
+        if ($value instanceof stdClass) {
+            $properties = get_object_vars($value);
+            ksort($properties, SORT_STRING);
+
+            return (object) array_map(self::canonical(...), $properties);
+        }
+
+        return is_array($value) ? array_map(self::canonical(...), $value) : $value;
+    }
+
+    /**
      * $array with every string-keyed level in key order: jsonb and the
      * MySQL family keep their own key order.
      *
@@ -1191,6 +1269,7 @@ final class RealBackendTest extends TestCase
                 StoredManifest::class,
                 StoredOrganization::class,
                 StoredParcel::class,
+                StoredPayload::class,
                 StoredPost::class,
                 StoredProfile::class,
                 StoredRibbon::class,
@@ -1282,10 +1361,17 @@ final class RealBackendTest extends TestCase
         $link->execute('DROP TABLE IF EXISTS kin_orm_invoices');
         $link->execute('DROP TABLE IF EXISTS kin_orm_events');
         $link->execute('DROP TABLE IF EXISTS kin_orm_surveys');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_payloads');
         $timestamp = $dialect === 'mysql' ? 'DATETIME(6)' : 'TIMESTAMP(6) WITHOUT TIME ZONE';
         $link->execute(
             'CREATE TABLE kin_orm_surveys (id INT PRIMARY KEY, '
             . ($dialect === 'mysql' ? 'answers JSON NOT NULL, extra_data JSON NULL)' : 'answers JSONB NOT NULL, extra_data JSON NULL)'),
+        );
+        $link->execute(
+            'CREATE TABLE kin_orm_payloads (id INT PRIMARY KEY, '
+            . ($dialect === 'mysql'
+                ? 'body JSON NOT NULL, meta JSON NULL, document JSON NOT NULL, draft JSON NULL)'
+                : 'body JSONB NOT NULL, meta JSON NULL, document JSONB NOT NULL, draft JSON NULL)'),
         );
         $link->execute("CREATE TABLE kin_orm_events (id INT PRIMARY KEY, occurred_at {$timestamp} NOT NULL, archived_at {$timestamp} NULL)");
         $link->execute(
