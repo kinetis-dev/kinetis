@@ -16,6 +16,7 @@ use Kinetis\Orm\Flush\Reference;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use ReflectionClass;
 use ReflectionProperty;
+use stdClass;
 
 /**
  * @internal One entity's runtime mapping, built once by OrmFactory from its
@@ -32,17 +33,21 @@ use ReflectionProperty;
  * or its exact "Y-m-d" string, and a string loads as a Date; a json value
  * is an array whose leaves are null, bool, int, finite float or UTF-8
  * string, nested no deeper than json_decode() reads at depth 512, or the
- * JSON text of one, and a string loads decoded; null only where the
- * property type allows it.
+ * JSON text of one, and a string loads decoded into arrays; a jsonObject
+ * value is a stdClass, and a jsonObjectOrList value a stdClass or a list,
+ * whose members are those leaves, lists and exact stdClass instances
+ * within the same depth, or the JSON text of one, and a string loads
+ * decoded with every JSON object a stdClass; null only where the property
+ * type allows it.
  *
  * A database value is a converted value with a backed enum replaced by its
  * backing value, a DateTimeImmutable by its UTC "Y-m-d H:i:s.u" string, a
- * Date by its "Y-m-d" string and a json array by its JSON encoding.
- * Predicate parameters, cursors, snapshots and written rows all use it, so
- * a loaded value and the same value read back from the entity compare
- * identical, one instant has one database value in every zone, and a json
- * column the server stores respaced or reordered compares by its decoded
- * value.
+ * Date by its "Y-m-d" string and a json array or stdClass by its JSON
+ * encoding. Predicate parameters, cursors, snapshots and written rows all
+ * use it, so a loaded value and the same value read back from the entity
+ * compare identical, one instant has one database value in every zone, and
+ * a json value compares by the JSON text its loaded value encodes to, so
+ * text the server stores respaced or reordered is no change.
  *
  * A #[BelongsTo] property is one of the mapped properties, over its
  * foreign-key column. Its converted and database value is the target's
@@ -79,6 +84,8 @@ final class EntityPlan
     private const int JSON_DEPTH = 512;
 
     private const int JSON_ENCODE = JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION;
+
+    private const array JSON_TYPES = ['json', 'jsonObject', 'jsonObjectOrList'];
 
     /** @var class-string<T> */
     public readonly string $class;
@@ -180,7 +187,7 @@ final class EntityPlan
     {
         $mapping = $this->property($property);
 
-        return $mapping['type'] === 'json'
+        return in_array($mapping['type'], self::JSON_TYPES, true)
             ? throw MappingException::jsonColumn($this->class, $property)
             : $mapping['column'];
     }
@@ -526,6 +533,8 @@ final class EntityPlan
             'timestamp' => self::timestamp($value),
             'date' => self::date($value),
             'json' => self::json($value),
+            'jsonObject' => self::jsonObject($value, false),
+            'jsonObjectOrList' => self::jsonObject($value, true),
         };
 
         if ($converted === null) {
@@ -557,12 +566,12 @@ final class EntityPlan
 
     private static function databaseValue(mixed $converted): null|bool|int|float|string
     {
-        /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable|Date|array<array-key, mixed> $converted */
+        /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable|Date|stdClass|array<array-key, mixed> $converted */
         return match (true) {
             $converted instanceof BackedEnum => $converted->value,
             $converted instanceof DateTimeImmutable => self::utc($converted),
             $converted instanceof Date => (string) $converted,
-            is_array($converted) => json_encode($converted, self::JSON_ENCODE),
+            is_array($converted), $converted instanceof stdClass => json_encode($converted, self::JSON_ENCODE),
             default => $converted,
         };
     }
@@ -659,28 +668,58 @@ final class EntityPlan
             }
         }
 
-        return is_array($value) && self::jsonArray($value, self::JSON_DEPTH - 1) ? $value : null;
+        return is_array($value) && self::jsonContainer($value, self::JSON_DEPTH - 1, false) ? $value : null;
     }
 
     /**
-     * Whether every key of $array and its nested arrays is an int or a
-     * UTF-8 string, every leaf is null, a bool, an int, a finite float or
-     * a UTF-8 string, and the nesting is at most $levels arrays deep.
+     * json() for a property that keeps JSON objects: a string is decoded
+     * with every object a stdClass, and the value either way is admitted
+     * only when it is a stdClass, or a list where $list allows one, that
+     * json_encode() writes and json_decode() reads back as itself.
      *
-     * @param array<array-key, mixed> $array
+     * @return stdClass|list<mixed>|null
      */
-    private static function jsonArray(array $array, int $levels): bool
+    private static function jsonObject(mixed $value, bool $list): stdClass|array|null
+    {
+        if (is_string($value)) {
+            try {
+                $value = json_decode($value, false, self::JSON_DEPTH, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                return null;
+            }
+        }
+
+        $admitted = self::isStdClass($value) || ($list && is_array($value) && array_is_list($value));
+
+        /** @var stdClass|list<mixed> $value */
+        return $admitted && self::jsonContainer($value, self::JSON_DEPTH - 1, true) ? $value : null;
+    }
+
+    /**
+     * Whether every key of $container and of the containers nested in it is
+     * an int or a UTF-8 string, every leaf is null, a bool, an int, a finite
+     * float or a UTF-8 string, and the nesting is at most $levels containers
+     * deep. With $objects, a nested container is a list or an exact
+     * stdClass, so json_decode() without assoc reads each back as itself,
+     * and a property name json_encode() skips, one starting with NUL, is
+     * refused; without, a nested container is an array of any keys.
+     *
+     * @param stdClass|array<array-key, mixed> $container
+     */
+    private static function jsonContainer(stdClass|array $container, int $levels, bool $objects): bool
     {
         if ($levels < 1) {
             return false;
         }
 
-        foreach ($array as $key => $value) {
-            $admitted = (is_int($key) || preg_match('//u', $key) === 1) && match (true) {
+        foreach ((array) $container as $key => $value) {
+            $named = is_int($key) || (preg_match('//u', $key) === 1 && !($objects && str_starts_with($key, "\0")));
+            $admitted = $named && match (true) {
                 $value === null, is_bool($value), is_int($value) => true,
                 is_float($value) => is_finite($value),
                 is_string($value) => preg_match('//u', $value) === 1,
-                is_array($value) => self::jsonArray($value, $levels - 1),
+                is_array($value) => (!$objects || array_is_list($value)) && self::jsonContainer($value, $levels - 1, $objects),
+                $objects && self::isStdClass($value) => self::jsonContainer($value, $levels - 1, true),
                 default => false,
             };
 
@@ -690,6 +729,12 @@ final class EntityPlan
         }
 
         return true;
+    }
+
+    /** @phpstan-assert-if-true stdClass $value */
+    private static function isStdClass(mixed $value): bool
+    {
+        return is_object($value) && $value::class === stdClass::class;
     }
 
     private static function utc(DateTimeImmutable $value): string
@@ -711,6 +756,10 @@ final class EntityPlan
             'date' => 'a ' . Date::class . ', or a "Y-m-d" string naming a day that exists in years 0001 to 9999',
             'json' => 'an array of null, bool, int, finite float, UTF-8 string and nested array values at most '
                 . (self::JSON_DEPTH - 1) . ' levels deep, or the JSON text of one',
+            'jsonObject' => 'a ' . stdClass::class . ' of null, bool, int, finite float, UTF-8 string, list and nested '
+                . stdClass::class . ' values at most ' . (self::JSON_DEPTH - 1) . ' levels deep, or the JSON text of a JSON object',
+            'jsonObjectOrList' => 'a ' . stdClass::class . ' or a list of null, bool, int, finite float, UTF-8 string, list and '
+                . stdClass::class . ' values at most ' . (self::JSON_DEPTH - 1) . ' levels deep, or the JSON text of a JSON object or array',
         };
 
         if ($property['enum'] !== null) {
