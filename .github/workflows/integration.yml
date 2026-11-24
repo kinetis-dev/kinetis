@@ -104,7 +104,7 @@ jobs:
         # stay database-free. Run here as well as under coverage in the
         # SonarQube workflow, so these cases get this job's full matrix
         # (MariaDB and PHP 8.5 included) rather than only the single
-        # MySQL 8.4 + PHP 8.4 combination that job pins.
+        # MySQL 9.7 + PHP 8.4 combination that job pins.
         working-directory: packages/query-builder
         run: vendor/bin/phpunit
         env:

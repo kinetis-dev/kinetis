@@ -366,7 +366,7 @@
   },
   "query-builder.html": {
    "canonical": "https://kinetis.dev/docs/query-builder.html",
-   "description": "A parameterized SQL builder over the connections Database sets up. It compiles the SQL that MySQL 8.4, MariaDB 11.4 and PostgreSQL 16 share, runs it on the connection or transaction you pass in, an...",
+   "description": "A parameterized SQL builder over the connections Database sets up. It compiles the SQL that MySQL 9.7, MariaDB 11.4 and PostgreSQL 18 share, runs it on the connection or transaction you pass in, an...",
    "og:image": "https://kinetis.dev/docs/_static/og-image.png",
    "og:url": "https://kinetis.dev/docs/query-builder.html",
    "title": "Query Builder - Kinetis"

@@ -1376,8 +1376,8 @@ $entities->repository(Shipment::class)
 - **Writing.** The database value is the instant in UTC, formatted
   `Y-m-d H:i:s.u` (`2026-03-04 05:06:07.123456`) and bound as a string.
   Its UTC year must be 0001 to 9999; any other throws `MappingException`
-  before SQL, from `persist()`, `flush()` or a predicate. A six-digit column on MySQL 8.4, MariaDB
-  11.4 and PostgreSQL 16 stores, returns and compares that whole range
+  before SQL, from `persist()`, `flush()` or a predicate. A six-digit column on MySQL 9.7, MariaDB
+  11.4 and PostgreSQL 18 stores, returns and compares that whole range
   exactly, though the MySQL family's date arithmetic functions are
   unreliable below year 1000.
 - **Changes.** The snapshot holds that string, so assigning the same
