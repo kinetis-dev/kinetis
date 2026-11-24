@@ -402,7 +402,7 @@ final class MetadataRegistryTest extends TestCase
         yield 'a json identifier' => [self::INVALID . 'ArrayIdentifier', 'ArrayIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
         yield 'a json version' => [self::INVALID . 'ArrayVersion', 'ArrayVersion has no usable version: the version property "version" must be typed int'];
         yield 'a relationship typed array' => [self::INVALID . 'ArrayRelationship', 'ArrayRelationship::$tags is not a usable #[BelongsTo] relationship: it declares array, which is not an entity class'];
-        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, array, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
+        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, array, stdClass, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
         yield 'a DateTimeInterface' => [self::INVALID . 'DateInterfaceProperty', 'DateInterfaceProperty::$publishedAt cannot be mapped: it declares DateTimeInterface, which'];
         yield 'a DateTimeImmutable subclass' => [self::INVALID . 'DateSubclassProperty', 'DateSubclassProperty::$publishedAt cannot be mapped: it declares ' . self::INVALID . 'LocalDate, which'];
         yield 'a timestamp identifier' => [self::INVALID . 'TimestampIdentifier', 'TimestampIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
@@ -412,7 +412,7 @@ final class MetadataRegistryTest extends TestCase
         yield 'a date version' => [self::INVALID . 'DateVersion', 'DateVersion has no usable version: the version property "version" must be typed int'];
         yield 'a relationship typed DateTimeImmutable' => [self::INVALID . 'TimestampRelationship', 'TimestampRelationship::$publishedAt is not a usable #[BelongsTo] relationship: DateTimeImmutable is not an entity in this MetadataRegistry'];
         yield 'mixed' => [self::INVALID . 'MixedProperty', 'MixedProperty::$data cannot be mapped: it declares mixed'];
-        yield 'object' => [self::INVALID . 'ObjectProperty', 'ObjectProperty::$data cannot be mapped: it declares object, which is not string, int, float, bool, array, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
+        yield 'object' => [self::INVALID . 'ObjectProperty', 'ObjectProperty::$data cannot be mapped: it declares object, which is not string, int, float, bool, array, stdClass, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
         yield 'a union wider than array and stdClass' => [self::INVALID . 'WideJsonUnion', 'WideJsonUnion::$data cannot be mapped: it declares the composite type stdClass|array|int'];
         yield 'an array and stdClass identifier' => [self::INVALID . 'JsonUnionIdentifier', 'JsonUnionIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
         yield 'a stdClass version' => [self::INVALID . 'StdClassVersion', 'StdClassVersion has no usable version: the version property "version" must be typed int'];

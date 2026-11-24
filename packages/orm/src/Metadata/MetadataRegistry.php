@@ -561,7 +561,7 @@ final readonly class MetadataRegistry
             throw MappingException::unsupportedProperty(
                 $class,
                 $name,
-                "declares {$typeName}, which is not string, int, float, bool, array, DateTimeImmutable, " . Date::class . ' or a backed enum',
+                "declares {$typeName}, which is not string, int, float, bool, array, stdClass, DateTimeImmutable, " . Date::class . ' or a backed enum',
             );
         }
 

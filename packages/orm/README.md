@@ -126,8 +126,9 @@ final class Article
 `MappingException` refuses, when the metadata is built and before any
 SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
-type, an intersection, any other type (`mixed`, an object without
-`#[BelongsTo]` or `#[HasOne]`, such as `DateTime`, `DateTimeInterface`
+type or `array|\stdClass` (see "JSON"), an intersection, any other type
+(`mixed`, an object other than `\stdClass` without `#[BelongsTo]` or
+`#[HasOne]`, such as `DateTime`, `DateTimeInterface`
 or a subclass of `DateTimeImmutable`, a unit enum), a missing or
 second identifier, a generated identifier not typed `?int`, a second
 `#[Version]`, a version property that is the identifier or is not typed
