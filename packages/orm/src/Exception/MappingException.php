@@ -156,6 +156,14 @@ final class MappingException extends RuntimeException
         );
     }
 
+    public static function jsonColumn(string $class, string $property): self
+    {
+        return new self(
+            "{$class}::\${$property} maps a JSON column, so no predicate, order or cursor can name it. "
+            . 'Filter or order by its content in SQL on EntityQuery::builder(), with whereRaw() or orderByRaw().',
+        );
+    }
+
     public static function notARelation(string $class, string $property): self
     {
         return new self(
