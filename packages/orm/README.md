@@ -1520,8 +1520,9 @@ $entities->flush(); // UPDATE forms SET fields = ? WHERE id = ?
   `cursorPaginate()` throw `MappingException` before SQL for a JSON
   property, `null` included. Filter or order by JSON content in SQL on
   `EntityQuery::builder()`, with `whereRaw()` or `orderByRaw()`.
-- **What does not round-trip.** An empty JSON object loads as `[]`, and
-  an empty array is written as `[]`. An integer beyond PHP's int range
+- **What does not round-trip.** A JSON object whose keys are `0` to
+  `n-1` in order, the empty object included, loads as a list and is
+  written back as a JSON array. An integer beyond PHP's int range
   loads as a float. A float is encoded under `serialize_precision`, whose
   default of `-1` round-trips it exactly. PostgreSQL `json` stores
   duplicate keys as sent and the last one wins when loaded, and `jsonb`
