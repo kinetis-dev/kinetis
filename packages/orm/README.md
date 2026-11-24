@@ -113,8 +113,8 @@ final class Article
   ordinary data.
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum,
   `DateTimeImmutable` (see "Timestamps"), `Kinetis\Orm\Date` (see
-  "Dates"), `array` over a JSON column (see "JSON"), and the nullable
-  form of each;
+  "Dates"), `array`, `stdClass` or `array|stdClass` over a JSON column
+  (see "JSON"), and the nullable form of each;
   on a `#[BelongsTo]` or `#[HasOne]` property, an
   entity class, and on a `#[HasMany]` or `#[ManyToMany]` property, `array`
   as a relationship collection instead of JSON (see "Relationships" and
@@ -346,6 +346,8 @@ Every entity query selects all mapped columns. Loading a row:
 | `DateTimeImmutable` | a `DateTimeImmutable`, or a UTC string `YYYY-MM-DD HH:MM:SS` with an optional `.` and one to six fraction digits, loaded in UTC (see "Timestamps") |
 | `Date` | a `Date`, or a string `YYYY-MM-DD` naming a day that exists, loaded as a `Date` (see "Dates") |
 | `array` | JSON text of an array or object, decoded into an array (see "JSON") |
+| `stdClass` | JSON text of an object, decoded with every object a `stdClass` and every array a list (see "JSON") |
+| `array\|stdClass` | JSON text of an array or object, decoded with every object a `stdClass` and every array a list (see "JSON") |
 | `?T` | also `null` |
 
 A mapped-value message names the class, property, table and column, and
@@ -1491,38 +1493,81 @@ $form->fields['email']['required'] = true;
 $entities->flush(); // UPDATE forms SET fields = ? WHERE id = ?
 ```
 
+A property declared `stdClass` or `array|stdClass` keeps JSON objects
+apart from arrays, so `{}` and `[]` both round-trip:
+
+```php
+#[Entity(table: 'webhooks')]
+final class Webhook
+{
+    public stdClass $headers;    // headers JSONB NOT NULL, always an object
+
+    /** @var list<mixed>|stdClass|null */
+    public array|stdClass|null $payload = null; // payload JSON NULL, an object or a list
+
+    public function __construct(private int $id) {}
+}
+
+$webhook = $entities->repository(Webhook::class)->findOrFail(1);
+$webhook->headers->accept = 'application/json';
+$webhook->payload = [];
+$entities->flush(); // UPDATE webhooks SET headers = ?, payload = ? WHERE id = ?
+```
+
 - **Mapping.** A property declared `array` or `?array` maps a JSON
   column, recorded in the metadata with the type `json`, unless
-  `#[HasMany]` or `#[ManyToMany]` makes it a relationship collection.
-  It is never the identifier, the version or a `#[BelongsTo]`.
+  `#[HasMany]` or `#[ManyToMany]` makes it a relationship collection. A
+  property declared exactly `stdClass` or `?stdClass` is recorded with
+  the type `jsonObject`, and one declared `array|stdClass` or
+  `array|stdClass|null`, in any order, with the type `jsonObjectOrList`.
+  No other union, and neither `object` nor `mixed`, is mapped. A JSON
+  property is never the identifier, the version or a relationship.
 - **Column.** `JSON` on MySQL and MariaDB, `json` or `jsonb` on
   PostgreSQL. The value is bound as a string without a cast. Nothing
   inspects the schema.
-- **Value.** An entity value is an array whose leaves are `null`, a bool,
-  an int, a finite float or a valid UTF-8 string, with int or valid
-  UTF-8 string keys, nested at most 511 arrays deep. An object anywhere
-  in it — a `JsonSerializable`, a `DateTimeImmutable`, an enum case — `INF`,
-  `NAN`, a malformed UTF-8 string or deeper nesting throws
-  `MappingException` from `persist()` or `flush()` before SQL.
-- **Loading.** A driver value is the JSON text of an array or object,
-  decoded with `json_decode($text, true, 512, JSON_THROW_ON_ERROR)` into
-  an array. SQL `NULL` is admitted where the property is nullable.
-  Malformed JSON, a top-level scalar or JSON `null`, a number beyond the
-  float range, deeper nesting, or any other value throws
-  `MappingException`, which names the value's type and never the value.
+- **Value.** An `array` property's value is an array whose leaves are
+  `null`, a bool, an int, a finite float or a valid UTF-8 string, with
+  int or valid UTF-8 string keys, nested at most 511 arrays deep. An
+  object anywhere in it (a `stdClass`, a `JsonSerializable`, a
+  `DateTimeImmutable`, an enum case), `INF`, `NAN`, a malformed UTF-8
+  string or deeper nesting throws `MappingException` from `persist()` or
+  `flush()` before SQL. A `stdClass` property's value is a `stdClass`,
+  and an `array|stdClass` property's a `stdClass` or a list, holding
+  the same leaves, lists and `stdClass` instances, with valid UTF-8
+  property names, nested at most 511 lists and objects deep together. An
+  array with keys other than `0` to `n-1` in order, a subclass of
+  `stdClass`, any other object, a property name starting with a NUL
+  byte, which `json_encode()` skips, or the refusals above throw
+  `MappingException` the same way.
+- **Loading.** A driver value is the JSON text of an array or object.
+  An `array` property decodes it with
+  `json_decode($text, true, 512, JSON_THROW_ON_ERROR)` into an array. A
+  `stdClass` or `array|stdClass` property decodes it with
+  `json_decode($text, false, 512, JSON_THROW_ON_ERROR)`, so every JSON
+  object at any depth is a `stdClass` and every JSON array a list; a
+  `stdClass` property refuses a top-level array. SQL `NULL` is admitted
+  where the property is nullable. Malformed JSON, a top-level scalar or
+  JSON `null`, a number beyond the float range, deeper nesting, or any
+  other value throws `MappingException`, which names the value's type
+  and never the value.
 - **Writing and changes.** The database value is
-  `json_encode($array, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE |
+  `json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE |
   JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)`. The snapshot
-  holds that encoding of the loaded array, so a nested change is a
-  change, and the spacing or key order the server stores is not. A
-  change of key order alone in the entity is written.
+  holds that encoding of the loaded value, and a flush compares the
+  encoding of the current value with it, so a nested change, including
+  one made in place on a loaded `stdClass`, is a change, and the spacing
+  or key order the server stores is not. A change of key order alone in
+  the entity is written, and so is `{}` replaced by `[]`.
 - **Predicates.** `where()`, `whereIn()`, `orderBy()`, `findBy()` and
   `cursorPaginate()` throw `MappingException` before SQL for a JSON
   property, `null` included. Filter or order by JSON content in SQL on
   `EntityQuery::builder()`, with `whereRaw()` or `orderByRaw()`.
-- **What does not round-trip.** A JSON object whose keys are `0` to
-  `n-1` in order, the empty object included, loads as a list and is
-  written back as a JSON array. An integer beyond PHP's int range
+- **What does not round-trip.** For an `array` property, a JSON object
+  whose keys are `0` to `n-1` in order, the empty object included, loads
+  as a list and is written back as a JSON array; a `stdClass` or
+  `array|stdClass` property keeps it an object. A JSON object with a key
+  starting with `\u0000` cannot load into a `stdClass` and is refused.
+  An integer beyond PHP's int range
   loads as a float. A float is encoded under `serialize_precision`, whose
   default of `-1` round-trips it exactly. PostgreSQL `json` stores
   duplicate keys as sent and the last one wins when loaded, and `jsonb`

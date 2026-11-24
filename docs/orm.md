@@ -74,7 +74,9 @@ Every non-static property but an inverse relationship maps a column,
 named in snake case unless `#[Column]` names it, and the property named
 `id` (or carrying `#[Id]`) is the identifier. A property declared
 `array` maps a JSON column unless `#[HasMany]` or `#[ManyToMany]` makes
-it a relationship collection, under the README's "JSON" contract. The
+it a relationship collection, and one declared `stdClass` or
+`array|stdClass` maps a JSON column that keeps objects apart from
+arrays, under the README's "JSON" contract. The
 README's "Entities" lists the admitted property
 types and every mapping refusal. Create the table with a migration
 ({doc}`migrations`).
