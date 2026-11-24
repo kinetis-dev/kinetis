@@ -32,6 +32,7 @@ use Kinetis\Orm\Tests\Fixtures\StoredPost;
 use Kinetis\Orm\Tests\Fixtures\StoredProfile;
 use Kinetis\Orm\Tests\Fixtures\StoredRibbon;
 use Kinetis\Orm\Tests\Fixtures\StoredSeal;
+use Kinetis\Orm\Tests\Fixtures\StoredSurvey;
 use Kinetis\Orm\Tests\Fixtures\StoredTicket;
 use Kinetis\Persistence\ConnectionDefinition;
 use Kinetis\Persistence\Contract\MysqlLink;
@@ -55,7 +56,7 @@ use PHPUnit\Framework\TestCase;
  *
  * Environment-gated: each case skips unless MYSQL_HOST or POSTGRES_HOST is
  * set and its driver's extension is loaded. CI's integration workflow runs
- * it against MySQL 8.4, MariaDB 11.4 and PostgreSQL 16.
+ * it against MySQL 9.7, MariaDB 11.4 and PostgreSQL 18.
  */
 final class RealBackendTest extends TestCase
 {
@@ -595,6 +596,87 @@ final class RealBackendTest extends TestCase
     }
 
     /**
+     * PostgreSQL stores answers as jsonb and extra_data as json; the MySQL
+     * family stores both as JSON. A change of key order alone is an UPDATE
+     * MySQL stores as the value its row already holds, so it reports no
+     * changed row and the flush confirms the row exists instead.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_json_columns_round_trip_and_a_nested_or_key_order_change_is_written(string $dialect, string $driver): void
+    {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $survey = new StoredSurvey();
+        $survey->id = 1;
+        $survey->answers = ['b' => 1, 'a' => ['x' => 'é/ü', 'f' => 1.0, 'n' => null, 'list' => [true, -2, 2.5]]];
+        $survey->extra = ['a' => 1, 'bb' => 2];
+        $entities->persist($survey);
+        $entities->flush();
+
+        $loaded = $factory->open()->repository(StoredSurvey::class)->findOrFail(1);
+        self::assertSame(self::sorted($survey->answers), self::sorted($loaded->answers));
+        self::assertSame(['a' => 1, 'bb' => 2], $loaded->extra);
+
+        $entities = $factory->open();
+        $loaded = $entities->repository(StoredSurvey::class)->findOrFail(1);
+        $loaded->answers['a']['x'] = 'changed';
+        $entities->flush();
+        self::assertSame('changed', $factory->open()->repository(StoredSurvey::class)->findOrFail(1)->answers['a']['x']);
+
+        $loaded->answers = array_reverse($loaded->answers, true);
+        $loaded->extra = ['bb' => 2, 'a' => 1];
+        $entities->flush();
+        $stored = $factory->open()->repository(StoredSurvey::class)->findOrFail(1);
+        self::assertSame(self::sorted($loaded->answers), self::sorted($stored->answers));
+        self::assertSame(
+            $dialect === 'pgsql' ? ['bb' => 2, 'a' => 1] : ['a' => 1, 'bb' => 2],
+            $dialect === 'pgsql' ? $stored->extra : self::sorted($stored->extra ?? []),
+            'json keeps the text it was sent',
+        );
+
+        $loaded->extra = null;
+        $entities->flush();
+        self::assertSame(
+            [['id' => 1, 'extra_data' => null]],
+            new Query($this->link())->table('kin_orm_surveys')->select('id', 'extra_data')->get(),
+        );
+        self::assertIsString(new Query($this->link())->table('kin_orm_surveys')->value('answers'));
+
+        if ($dialect === 'pgsql') {
+            $nul = new StoredSurvey();
+            [$nul->id, $nul->answers, $nul->extra] = [2, ["\u{0000}"], null];
+            $session = $factory->open();
+            $session->persist($nul);
+
+            try {
+                $session->flush();
+                self::fail('jsonb stored a NUL character.');
+            } catch (QueryException) {
+                self::assertNull($factory->open()->repository(StoredSurvey::class)->find(2));
+            }
+        }
+    }
+
+    /**
+     * $array with every string-keyed level in key order: jsonb and the
+     * MySQL family keep their own key order.
+     *
+     * @param array<array-key, mixed> $array
+     * @return array<array-key, mixed>
+     */
+    private static function sorted(array $array): array
+    {
+        if (!array_is_list($array)) {
+            ksort($array, SORT_STRING);
+        }
+
+        return array_map(static fn (mixed $value): mixed => is_array($value) ? self::sorted($value) : $value, $array);
+    }
+
+    /**
      * One persist() writes a whole aggregate: every row lands after the rows
      * its NOT NULL foreign keys name, and the key each parent insert
      * generated is what the server stored in its children.
@@ -1113,6 +1195,7 @@ final class RealBackendTest extends TestCase
                 StoredProfile::class,
                 StoredRibbon::class,
                 StoredSeal::class,
+                StoredSurvey::class,
                 StoredTicket::class,
             ]),
         );
@@ -1198,7 +1281,12 @@ final class RealBackendTest extends TestCase
         $link->execute('DROP TABLE IF EXISTS kin_orm_tickets');
         $link->execute('DROP TABLE IF EXISTS kin_orm_invoices');
         $link->execute('DROP TABLE IF EXISTS kin_orm_events');
+        $link->execute('DROP TABLE IF EXISTS kin_orm_surveys');
         $timestamp = $dialect === 'mysql' ? 'DATETIME(6)' : 'TIMESTAMP(6) WITHOUT TIME ZONE';
+        $link->execute(
+            'CREATE TABLE kin_orm_surveys (id INT PRIMARY KEY, '
+            . ($dialect === 'mysql' ? 'answers JSON NOT NULL, extra_data JSON NULL)' : 'answers JSONB NOT NULL, extra_data JSON NULL)'),
+        );
         $link->execute("CREATE TABLE kin_orm_events (id INT PRIMARY KEY, occurred_at {$timestamp} NOT NULL, archived_at {$timestamp} NULL)");
         $link->execute(
             'CREATE TABLE kin_orm_articles (id INT PRIMARY KEY, title VARCHAR(100) NOT NULL, summary VARCHAR(200) NULL, '

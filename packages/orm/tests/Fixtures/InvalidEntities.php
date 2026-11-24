@@ -118,11 +118,29 @@ final class IntersectionProperty
 }
 
 #[Entity]
-final class ArrayProperty
+final class ArrayIdentifier
+{
+    /** @var array<array-key, mixed> */
+    public array $id;
+}
+
+#[Entity]
+final class ArrayVersion
 {
     public int $id;
 
-    /** @var list<string> */
+    /** @var array<array-key, mixed> */
+    #[Version]
+    public array $version;
+}
+
+#[Entity]
+final class ArrayRelationship
+{
+    public int $id;
+
+    /** @var array<array-key, mixed> */
+    #[BelongsTo]
     public array $tags;
 }
 
