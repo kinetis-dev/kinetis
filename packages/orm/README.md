@@ -113,10 +113,12 @@ final class Article
   ordinary data.
 - **Types.** `string`, `int`, `float`, `bool`, a backed enum,
   `DateTimeImmutable` (see "Timestamps"), `Kinetis\Orm\Date` (see
-  "Dates"), and the nullable form of each;
+  "Dates"), `array` over a JSON column (see "JSON"), and the nullable
+  form of each;
   on a `#[BelongsTo]` or `#[HasOne]` property, an
   entity class, and on a `#[HasMany]` or `#[ManyToMany]` property, `array`
-  (see "Relationships" and "Many-to-many relationships").
+  as a relationship collection instead of JSON (see "Relationships" and
+  "Many-to-many relationships").
 - **Classes.** An entity has no parent class and is neither abstract nor
   readonly; it may be final. Its constructor's signature and visibility
   do not matter.
@@ -124,10 +126,9 @@ final class Article
 `MappingException` refuses, when the metadata is built and before any
 SQL: a class without `#[Entity]`, a readonly class or property, a hooked
 or virtual property, an untyped property, a union other than a nullable
-type, an intersection, any other type (`mixed`, `array` without
-`#[HasMany]` or `#[ManyToMany]`, an object without `#[BelongsTo]` or
-`#[HasOne]`, such as `DateTime`, `DateTimeInterface` or a subclass of
-`DateTimeImmutable`, a unit enum), a missing or
+type, an intersection, any other type (`mixed`, an object without
+`#[BelongsTo]` or `#[HasOne]`, such as `DateTime`, `DateTimeInterface`
+or a subclass of `DateTimeImmutable`, a unit enum), a missing or
 second identifier, a generated identifier not typed `?int`, a second
 `#[Version]`, a version property that is the identifier or is not typed
 `int`, an invalid name or connection name, the reserved connection name
@@ -344,6 +345,7 @@ Every entity query selects all mapped columns. Loading a row:
 | backed enum | a case, or a backing value admitted under its backing type's rule |
 | `DateTimeImmutable` | a `DateTimeImmutable`, or a UTC string `YYYY-MM-DD HH:MM:SS` with an optional `.` and one to six fraction digits, loaded in UTC (see "Timestamps") |
 | `Date` | a `Date`, or a string `YYYY-MM-DD` naming a day that exists, loaded as a `Date` (see "Dates") |
+| `array` | JSON text of an array or object, decoded into an array (see "JSON") |
 | `?T` | also `null` |
 
 A mapped-value message names the class, property, table and column, and
@@ -401,7 +403,8 @@ property's type before either reaches the query builder, so an unknown
 property or an inadmissible value throws `MappingException` before SQL.
 A backed enum binds as its backing value. An inverse relationship maps
 no column, so naming one there throws `MappingException` before SQL too
-(see "Relationship predicates").
+(see "Relationship predicates"), and so does a JSON property (see
+"JSON").
 
 `get()` and `findBy()` buffer every matching row, however many there are.
 Page through a result that can grow with `cursorPaginate()`.
@@ -1464,6 +1467,68 @@ $entities->repository(Booking::class)
   admitted and bound the same way, and a malformed one throws
   `MappingException` before SQL.
 
+## JSON
+
+```php
+use Kinetis\Orm\Attributes\Column;
+use Kinetis\Orm\Attributes\Entity;
+
+#[Entity(table: 'forms')]
+final class Form
+{
+    /** @var array<string, mixed> */
+    public array $fields = []; // fields JSONB NOT NULL
+
+    /** @var array<string, mixed>|null */
+    #[Column(name: 'layout_hints')]
+    public ?array $hints = null; // layout_hints JSON NULL
+
+    public function __construct(private int $id) {}
+}
+
+$form = $entities->repository(Form::class)->findOrFail(1);
+$form->fields['email']['required'] = true;
+$entities->flush(); // UPDATE forms SET fields = ? WHERE id = ?
+```
+
+- **Mapping.** A property declared `array` or `?array` maps a JSON
+  column, recorded in the metadata with the type `json`, unless
+  `#[HasMany]` or `#[ManyToMany]` makes it a relationship collection.
+  It is never the identifier, the version or a `#[BelongsTo]`.
+- **Column.** `JSON` on MySQL and MariaDB, `json` or `jsonb` on
+  PostgreSQL. The value is bound as a string without a cast. Nothing
+  inspects the schema.
+- **Value.** An entity value is an array whose leaves are `null`, a bool,
+  an int, a finite float or a valid UTF-8 string, with int or valid
+  UTF-8 string keys, nested at most 511 arrays deep. An object anywhere
+  in it — a `JsonSerializable`, a `DateTimeImmutable`, an enum case — `INF`,
+  `NAN`, a malformed UTF-8 string or deeper nesting throws
+  `MappingException` from `persist()` or `flush()` before SQL.
+- **Loading.** A driver value is the JSON text of an array or object,
+  decoded with `json_decode($text, true, 512, JSON_THROW_ON_ERROR)` into
+  an array. SQL `NULL` is admitted where the property is nullable.
+  Malformed JSON, a top-level scalar or JSON `null`, a number beyond the
+  float range, deeper nesting, or any other value throws
+  `MappingException`, which names the value's type and never the value.
+- **Writing and changes.** The database value is
+  `json_encode($array, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE |
+  JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)`. The snapshot
+  holds that encoding of the loaded array, so a nested change is a
+  change, and the spacing or key order the server stores is not. A
+  change of key order alone in the entity is written.
+- **Predicates.** `where()`, `whereIn()`, `orderBy()`, `findBy()` and
+  `cursorPaginate()` throw `MappingException` before SQL for a JSON
+  property, `null` included. Filter or order by JSON content in SQL on
+  `EntityQuery::builder()`, with `whereRaw()` or `orderByRaw()`.
+- **What does not round-trip.** An empty JSON object loads as `[]`, and
+  an empty array is written as `[]`. An integer beyond PHP's int range
+  loads as a float. A float is encoded under `serialize_precision`, whose
+  default of `-1` round-trips it exactly. PostgreSQL `json` stores
+  duplicate keys as sent and the last one wins when loaded, and `jsonb`
+  refuses a `\u0000` character, so that write fails at `flush()` with
+  `Kinetis\Persistence\Exception\QueryException`. JSON `null` stored in
+  the column loads as neither `null` nor an array and is refused.
+
 ## The query builder underneath
 
 `EntityQuery::builder()` returns a copy of the underlying
@@ -1655,6 +1720,7 @@ provisional identifiers or versions, batched or bulk writes,
 automatic retries, flushing on `close()` or destruction, automatic
 timestamps, `DateTime` properties, `timestamptz` or MySQL `TIMESTAMP`
 columns, time-only values, date arithmetic, time zone or precision options,
+JSON path queries or JSON-mapped value objects,
 custom value converters, UUID generation,
 composite identifiers, inheritance, partial entities, transient
 properties, schema validation, CLI commands, streaming, or static model
