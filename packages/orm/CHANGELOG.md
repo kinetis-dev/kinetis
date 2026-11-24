@@ -2,7 +2,7 @@
 
 Notable changes to `kinetis/orm`, newest first.
 
-## [Unreleased]
+## 1.15.0
 
 ### Added
 
