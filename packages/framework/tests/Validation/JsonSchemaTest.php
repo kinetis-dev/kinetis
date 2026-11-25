@@ -15,6 +15,7 @@ use Kinetis\Tests\Validation\Fixtures\DuplicateKeywordRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullableFieldsRequest;
 use Kinetis\Tests\Validation\Fixtures\NullableInFieldRequest;
+use Kinetis\Tests\Validation\Fixtures\KeptObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\NullableObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectMapFieldRequest;
 use Kinetis\Tests\Validation\Fixtures\ObjectMapListOfRequest;
@@ -534,6 +535,13 @@ final class JsonSchemaTest extends TestCase
 
         self::assertSame(['type' => 'object', 'additionalProperties' => true], $schema['properties']['meta']);
         self::assertSame(['name', 'meta'], $schema['required']);
+    }
+
+    public function test_keep_objects_leaves_an_object_maps_schema_unchanged(): void
+    {
+        $schema = JsonSchema::forClass(KeptObjectMapRequest::class);
+
+        self::assertSame(['type' => 'object', 'additionalProperties' => true], $schema['properties']['values']);
     }
 
     /**

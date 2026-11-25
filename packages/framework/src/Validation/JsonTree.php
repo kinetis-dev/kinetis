@@ -6,7 +6,7 @@ namespace Kinetis\Validation;
 
 /**
  * Converts between `json_decode(..., associative: false)`'s own
- * `stdClass`/array-distinguishing tree and the two shapes
+ * `stdClass`/array-distinguishing tree and the shapes
  * `Kinetis\Validation\Hydrator` needs at different points: `convert()`
  * preserves the object-vs-array distinction (wrapping every `stdClass`
  * node in a `JsonObject` marker) for the type-mismatch check itself;
@@ -64,6 +64,27 @@ final class JsonTree
 
         if (is_array($node)) {
             return array_map(self::unwrap(...), $node);
+        }
+
+        return $node;
+    }
+
+    /**
+     * The inverse of convert() that keeps the distinction: every
+     * `JsonObject` becomes a `stdClass` again and every array stays a
+     * list, recursively, which is the tree `json_decode()` produced in
+     * the first place. Used for an `#[ObjectMap(keepObjects: true)]`
+     * parameter's members, so `json_encode()` writes `{}` and `[]` back
+     * as they arrived.
+     */
+    public static function objects(mixed $node): mixed
+    {
+        if ($node instanceof JsonObject) {
+            return (object) array_map(self::objects(...), $node->toArray());
+        }
+
+        if (is_array($node)) {
+            return array_map(self::objects(...), $node);
         }
 
         return $node;

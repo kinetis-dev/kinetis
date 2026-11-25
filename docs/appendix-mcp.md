@@ -408,7 +408,10 @@ body, and the one the tool's `inputSchema` promises. A parameter typed
 - An `#[ObjectMap] array` parameter, published as
   `{type: object, additionalProperties: true}`, takes a JSON object of
   any keys and receives it as a plain PHP array, nested objects
-  included. A JSON array is `not_a_json_object` and a scalar
+  included. With `#[ObjectMap(keepObjects: true)]` the parameter is
+  still an array of the object's members, but every nested JSON object
+  is a `stdClass` and every JSON array a list, so `{}` and `[]` stay
+  distinct. A JSON array is `not_a_json_object` and a scalar
   `type_mismatch`, at that argument's path. `#[ObjectMap]` on a
   parameter not typed `array`, or beside `#[ListOf]`, is refused at
   registration and when the binding plan is derived.

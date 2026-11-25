@@ -33,7 +33,7 @@ final class HttpCacheTest extends TestCase
                     'parameters' => [
                         [
                             'name' => 'name', 'scalarType' => 'string', 'enumClass' => null, 'dtoClass' => null, 'nestedPlan' => null,
-                            'listItem' => null, 'objectMap' => false, 'absent' => false,
+                            'listItem' => null, 'objectMap' => false, 'keepObjects' => false, 'absent' => false,
                             'hasDefault' => false, 'defaultValue' => null,
                             'allowsNull' => false,
                             'constraints' => [
@@ -113,7 +113,7 @@ final class HttpCacheTest extends TestCase
                     'parameters' => [
                         [
                             'name' => 'name', 'scalarType' => 'string', 'enumClass' => null, 'dtoClass' => null, 'nestedPlan' => null,
-                            'listItem' => null, 'objectMap' => false, 'absent' => false,
+                            'listItem' => null, 'objectMap' => false, 'keepObjects' => false, 'absent' => false,
                             'hasDefault' => false, 'defaultValue' => null,
                             'allowsNull' => false, 'constraints' => [],
                         ],

@@ -78,7 +78,8 @@ strings and `grams` as an integer above zero. Values keep their JSON
 types: `grams` accepts `2500`, not `"2500"`. A class-typed parameter
 receives a JSON object hydrated and validated as that DTO; an
 `#[ObjectMap] array` parameter accepts a JSON object of any keys as a
-plain PHP array. A missing argument, an unknown key and a broken rule
+plain PHP array, and `#[ObjectMap(keepObjects: true)]` keeps every
+nested JSON object a `stdClass` so `{}` survives. A missing argument, an unknown key and a broken rule
 come back together in one tool result with `isError: true`, which the
 agent can correct its call from (see [Error handling](#error-handling)).
 A parameter declares one named type; a union is refused at

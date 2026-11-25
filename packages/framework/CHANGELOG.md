@@ -2,6 +2,18 @@
 
 Notable changes to `kinetis/framework`, newest first.
 
+## 1.32.0
+
+### Added
+
+- `#[ObjectMap(keepObjects: true)]` keeps the JSON shape inside an object map: the parameter is still an array keyed by the object's member names, and every nested JSON object becomes a `stdClass` and every JSON array a list at any depth, so `json_encode()` writes `{}` and `[]` back as they arrived. The parameter's constraints read the same value. Without the option, nested objects stay plain arrays, and the JSON Schema is unchanged either way.
+
+### Changed
+
+- `Hydrator::objectMap()` returns the parameter's `ObjectMap` attribute, or `null` without one, instead of a `bool`.
+- `Hydrator::resolveObjectMap()` takes `bool $keepObjects` before `$constraints`.
+- A `HydrationPlanParameter` carries `keepObjects`. A compiled artifact from an earlier version fails validation and is recompiled.
+
 ## 1.31.0
 
 ### Added

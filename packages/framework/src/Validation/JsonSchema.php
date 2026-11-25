@@ -240,7 +240,7 @@ final class JsonSchema
             $schema = self::withNullableSchema(['type' => 'string', 'format' => 'binary'], $nullable);
         } elseif ($type !== null && !$type->isBuiltin()) {
             $schema = self::schemaForNonBuiltin($parameter, $type, $classSchema, $dtoClass, $nullable);
-        } elseif ($objectMap) {
+        } elseif ($objectMap !== null) {
             // #[ObjectMap] is the one `array`-typed property whose
             // wire shape is a JSON object, so it is the one that
             // must not fall through to forType()'s `{type: array}`.

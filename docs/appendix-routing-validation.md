@@ -1554,6 +1554,30 @@ form-encoded body, or a direct `Hydrator::hydrate()` call with a
 hand-built PHP array — therefore cannot fill an `#[ObjectMap]` property
 at all; a JSON request body and an MCP tool call both can.
 
+`#[ObjectMap(keepObjects: true)]` keeps the JSON shape inside the map.
+The property is still an array keyed by the object's member names, but
+every nested JSON object becomes a `stdClass` and every JSON array a
+list, at any depth, so `{}` and `[]` stay distinct and `json_encode()`
+writes the value back as it arrived:
+
+```{code-block} php
+final readonly class StoreSettingsRequest
+{
+    public function __construct(
+        #[ObjectMap(keepObjects: true)]
+        public array $settings,
+    ) {}
+}
+```
+
+For `{"settings": {"box": {}, "tags": [], "limits": {"max": {}}}}`,
+`$settings['box']` is an empty `stdClass`, `$settings['tags']` is `[]`,
+and `$settings['limits']->max` is an empty `stdClass`. The property's
+constraints read the same value. Without the option the same body
+hydrates to `['box' => [], 'tags' => [], 'limits' => ['max' => []]]`.
+The option changes neither the JSON Schema nor what the property
+refuses.
+
 `#[ObjectMap]` is only valid on a parameter typed `array`, and never on
 the same parameter as `#[ListOf]`: one admits a JSON object and the
 other a JSON array, so a parameter carrying both would accept nothing.
