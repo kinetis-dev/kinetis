@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Kinetis\DatabaseBridge\Tests\Fixtures;
 
 use Kinetis\Persistence\Contract\MysqlLink;
+use Kinetis\Persistence\Contract\ReportsJsonDepth;
 use Kinetis\Persistence\Contract\SqlResult;
 use Kinetis\Persistence\Contract\SqlTransaction;
 use Kinetis\Persistence\Driver\BufferedSqlResult;
 use LogicException;
 
 /** Records every statement and answers each with the same fixed rows. */
-final class RowsMysqlLink implements MysqlLink
+final class RowsMysqlLink implements MysqlLink, ReportsJsonDepth
 {
     /** @var list<string> */
     public array $statements = [];
@@ -48,5 +49,10 @@ final class RowsMysqlLink implements MysqlLink
     public function isClosed(): bool
     {
         return false;
+    }
+
+    public function jsonDepth(): int
+    {
+        return 100;
     }
 }

@@ -13,6 +13,7 @@ use Kinetis\Orm\Exception\RollbackFailedException;
 use Kinetis\Orm\Metadata\MetadataRegistry;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\PostgresLink;
+use Kinetis\Persistence\Contract\ReportsJsonDepth;
 use Kinetis\Persistence\Contract\SqlTransaction;
 use Throwable;
 use WeakMap;
@@ -35,10 +36,12 @@ final class OrmFactory
 
     /**
      * @param array<class-string, EntityPlan<object>> $plans
+     * @param positive-int $jsonDepth
      */
     private function __construct(
         private readonly MysqlLink|PostgresLink $link,
         private readonly array $plans,
+        private readonly int $jsonDepth,
     ) {
         $this->sessions = new WeakMap();
     }
@@ -48,9 +51,13 @@ final class OrmFactory
      * the client of that connection. A connection no entity names gives a
      * factory that maps none.
      *
+     * The link's JSON depth is read once here, which opens a connection on
+     * a MySQL-family link that has none open yet.
+     *
      * @throws InvalidArgumentException for a transaction, which also carries
      *         a link's dialect marker: an EntityManager reads through the
-     *         client, and every transaction it writes in begins there
+     *         client, and every transaction it writes in begins there; and
+     *         for a link that does not report its server's JSON depth
      */
     public static function create(
         MysqlLink|PostgresLink $link,
@@ -65,15 +72,24 @@ final class OrmFactory
             );
         }
 
+        if (!$link instanceof ReportsJsonDepth) {
+            throw new InvalidArgumentException(
+                'OrmFactory::create() was given a link that does not report the JSON depth its server stores ('
+                . $link::class . '). Pass a client that implements ' . ReportsJsonDepth::class . ', as every '
+                . 'Kinetis\\Persistence\\Driver client does.',
+            );
+        }
+
+        $jsonDepth = $link->jsonDepth();
         $plans = [];
 
         foreach ($metadata->toArray()['entities'] as $mapping) {
             if ($mapping['connection'] === $connection) {
-                $plans[$mapping['class']] = new EntityPlan($mapping);
+                $plans[$mapping['class']] = new EntityPlan($mapping, $jsonDepth);
             }
         }
 
-        return new self($link, $plans);
+        return new self($link, $plans, $jsonDepth);
     }
 
     /**
@@ -82,7 +98,20 @@ final class OrmFactory
      */
     public function open(): EntityManager
     {
-        return EntityManager::open($this->link, $this->plans);
+        return EntityManager::open($this->link, $this->plans, $this->jsonDepth);
+    }
+
+    /**
+     * The levels of nested arrays and objects a JSON property of this
+     * connection holds at most: what its server stores, as the link
+     * reported it when the factory was created. A deeper value is refused
+     * before SQL.
+     *
+     * @return positive-int
+     */
+    public function jsonDepth(): int
+    {
+        return $this->jsonDepth;
     }
 
     /**
@@ -138,7 +167,7 @@ final class OrmFactory
     private function session(callable $callback): mixed
     {
         $transaction = $this->link->beginTransaction();
-        $manager = EntityManager::bind($transaction, $this->plans);
+        $manager = EntityManager::bind($transaction, $this->plans, $this->jsonDepth);
 
         try {
             $result = $callback($manager, SessionTransaction::of($transaction));

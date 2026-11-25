@@ -180,10 +180,12 @@ final class EntityManager
 
     /**
      * @param array<class-string, EntityPlan<object>> $plans
+     * @param positive-int $jsonDepth
      */
     private function __construct(
         private readonly MysqlLink|PostgresLink $link,
         private readonly array $plans,
+        private readonly int $jsonDepth,
     ) {
         $this->owner = Fiber::getCurrent();
         $this->snapshots = new WeakMap();
@@ -196,10 +198,11 @@ final class EntityManager
      * @internal OrmFactory::open() is the way to a manager.
      *
      * @param array<class-string, EntityPlan<object>> $plans
+     * @param positive-int $jsonDepth
      */
-    public static function open(MysqlLink|PostgresLink $link, array $plans): self
+    public static function open(MysqlLink|PostgresLink $link, array $plans, int $jsonDepth): self
     {
-        return new self($link, $plans);
+        return new self($link, $plans, $jsonDepth);
     }
 
     /**
@@ -207,10 +210,11 @@ final class EntityManager
      *           it began, which is then this manager's only link.
      *
      * @param array<class-string, EntityPlan<object>> $plans
+     * @param positive-int $jsonDepth
      */
-    public static function bind(MysqlTransaction|PostgresTransaction $transaction, array $plans): self
+    public static function bind(MysqlTransaction|PostgresTransaction $transaction, array $plans, int $jsonDepth): self
     {
-        $manager = new self($transaction, $plans);
+        $manager = new self($transaction, $plans, $jsonDepth);
         $manager->transaction = $transaction;
 
         return $manager;
@@ -397,6 +401,17 @@ final class EntityManager
         $this->transaction = null;
         $this->detach();
         $transaction?->close();
+    }
+
+    /**
+     * The levels of nested arrays and objects a JSON property of this
+     * manager's connection holds at most: OrmFactory::jsonDepth().
+     *
+     * @return positive-int
+     */
+    public function jsonDepth(): int
+    {
+        return $this->jsonDepth;
     }
 
     public function isClosed(): bool

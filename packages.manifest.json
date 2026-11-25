@@ -61,7 +61,7 @@
             "description": "Runtime-matched MySQL and Postgres clients (mysqli async, ext-pgsql async, PDO) built from a neutral connection definition, with a transaction safety net and injectable SQL instrumentation. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "namespace": "Kinetis\\Persistence\\",
             "testNamespace": "Kinetis\\Persistence\\Tests\\",
-            "version": "1.4.8",
+            "version": "1.5.0",
             "requiresDev": [
                 "framework"
             ],
@@ -82,7 +82,7 @@
             "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata, an ORM factory for every connection an entity names and a lazy request-scoped registry of entity managers.",
             "namespace": "Kinetis\\DatabaseBridge\\",
             "testNamespace": "Kinetis\\DatabaseBridge\\Tests\\",
-            "version": "1.4.6",
+            "version": "1.4.7",
             "requires": [
                 "framework",
                 "persistence"
@@ -182,7 +182,7 @@
             "description": "A data mapper over kinetis/query-builder: attributed plain PHP entities compiled into portable metadata, typed repositories and entity queries, constructor-free hydration, explicit belongs-to, has-one, has-many and many-to-many relationships loaded eagerly through batched secondary queries, owned relationships that persist, reorder and remove a whole aggregate as one graph, owning join collections that write their join table as part of it, a unit of work with an identity map, snapshot change tracking and a dependency-ordered transactional flush, factory-owned transaction sessions with locking entity reads, and per-entity connection affinity with one factory and one manager per connection. Usable standalone; kinetis/database-bridge wires it into Kinetis.",
             "namespace": "Kinetis\\Orm\\",
             "testNamespace": "Kinetis\\Orm\\Tests\\",
-            "version": "1.15.0",
+            "version": "1.16.0",
             "requires": [
                 "persistence",
                 "query-builder"
@@ -719,7 +719,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, mapped entities and a request-scoped unit of work over kinetis/orm, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.4.11",
+            "version": "1.4.12",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",

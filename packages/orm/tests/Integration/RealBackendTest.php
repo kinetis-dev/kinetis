@@ -723,6 +723,125 @@ final class RealBackendTest extends TestCase
     }
 
     /**
+     * The factory reports the JSON depth its server stores: 100 on MySQL,
+     * 31 on MariaDB before 12.2, and 2499, json_decode()'s limit for nested
+     * objects, on later MariaDB and on PostgreSQL. At that depth a scalar
+     * leaf and an empty array or object leaf round-trip through json, jsonb
+     * and JSON alike; one level deeper is refused by an insert and by an
+     * update before any statement runs, so the stored rows stay as they
+     * were.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_json_nested_to_the_server_depth_round_trips_and_one_level_deeper_is_refused_before_sql(
+        string $dialect,
+        string $driver,
+    ): void {
+        $factory = $this->factory($dialect, $driver);
+        $depth = $factory->jsonDepth();
+        self::assertSame(self::serverJsonDepth($this->link()), $depth);
+        self::assertSame($depth, $factory->open()->jsonDepth());
+
+        $entities = $factory->open();
+        $survey = new StoredSurvey();
+        [$survey->id, $survey->answers, $survey->extra] = [1, self::nest($depth, 1, false), self::nest($depth - 1, [], false)];
+        $payload = new StoredPayload();
+        $payload->id = 1;
+        $payload->body = self::nest($depth, 'leaf', true);
+        $payload->meta = self::nest($depth - 1, new stdClass(), true);
+        $payload->document = self::nest($depth - 1, new stdClass(), false);
+        $payload->draft = self::nest($depth - 1, [], false);
+        $entities->persist($survey);
+        $entities->persist($payload);
+        $entities->flush();
+
+        $entities = $factory->open();
+        $loaded = $entities->repository(StoredSurvey::class)->findOrFail(1);
+        self::assertSame([$survey->answers, $survey->extra], [$loaded->answers, $loaded->extra]);
+        $loadedPayload = $entities->repository(StoredPayload::class)->findOrFail(1);
+
+        foreach (['body', 'meta', 'document', 'draft'] as $property) {
+            self::assertSame(
+                json_encode($payload->{$property}, JSON_THROW_ON_ERROR, $depth),
+                json_encode($loadedPayload->{$property}, JSON_THROW_ON_ERROR, $depth),
+                $property,
+            );
+        }
+
+        $deeper = new StoredSurvey();
+        [$deeper->id, $deeper->answers, $deeper->extra] = [2, self::nest($depth + 1, 1, false), null];
+        $deeperPayload = new StoredPayload();
+        [$deeperPayload->id, $deeperPayload->body, $deeperPayload->meta] = [2, self::nest($depth + 1, 1, true), null];
+        $deeperPayload->document = [];
+        $deeperPayload->draft = null;
+        $refusals = [
+            'insert' => static fn () => $factory->open()->persist($deeper),
+            'object insert' => static fn () => $factory->open()->persist($deeperPayload),
+            'update' => static function () use ($entities, $loaded, $depth): void {
+                $loaded->extra = self::nest($depth, [], false);
+                $entities->flush();
+            },
+        ];
+
+        foreach ($refusals as $write => $refused) {
+            try {
+                $refused();
+                self::fail("The {$write} was accepted.");
+            } catch (MappingException $e) {
+                self::assertStringContainsString("at most {$depth} levels deep", $e->getMessage(), $write);
+            }
+        }
+
+        $rows = new Query($this->link())->table('kin_orm_surveys')->select('id', 'extra_data')->get();
+        self::assertCount(1, $rows);
+        self::assertSame(1, (int) $rows[0]['id']);
+        self::assertSame(
+            json_encode($survey->extra, JSON_THROW_ON_ERROR, $depth),
+            json_encode(json_decode((string) $rows[0]['extra_data'], true, $depth + 1, JSON_THROW_ON_ERROR), JSON_THROW_ON_ERROR, $depth),
+        );
+        self::assertSame(1, new Query($this->link())->table('kin_orm_payloads')->count());
+    }
+
+    /**
+     * The JSON depth the server behind $link stores, derived here from its
+     * reported version rather than through the clients.
+     */
+    private static function serverJsonDepth(MysqlLink|PostgresLink $link): int
+    {
+        if ($link instanceof PostgresLink) {
+            return 2499;
+        }
+
+        $row = $link->query('SELECT VERSION() AS version')->fetchRow();
+        self::assertIsArray($row);
+        $version = (string) $row['version'];
+
+        if (!str_contains($version, 'MariaDB')) {
+            return 100;
+        }
+
+        return version_compare(explode('-', $version)[0], '12.2', '<') ? 31 : 2499;
+    }
+
+    /**
+     * $leaf wrapped in $levels lists, or in $levels objects with one member
+     * each when $objects is set.
+     *
+     * @return ($objects is true ? stdClass : list<mixed>)
+     */
+    private static function nest(int $levels, mixed $leaf, bool $objects): stdClass|array
+    {
+        for ($level = 0; $level < $levels; $level++) {
+            $leaf = $objects ? (object) ['a' => $leaf] : [$leaf];
+        }
+
+        /** @var stdClass|list<mixed> $leaf */
+        return $leaf;
+    }
+
+    /**
      * $value with every stdClass's properties in key order: jsonb and the
      * MySQL family keep their own key order.
      */

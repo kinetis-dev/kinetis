@@ -9,6 +9,7 @@ use Closure;
 use IteratorAggregate;
 use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\MysqlTransaction;
+use Kinetis\Persistence\Contract\ReportsJsonDepth;
 use Kinetis\Persistence\Contract\SqlResult;
 use LogicException;
 use Traversable;
@@ -25,7 +26,7 @@ use Traversable;
  * SQL the ORM actually produces rather than replacing them with an
  * expectation.
  */
-final class CannedMysqlLink implements MysqlLink
+final class CannedMysqlLink implements MysqlLink, ReportsJsonDepth
 {
     /** @var list<array{string, list<mixed>}> */
     public array $statements = [];
@@ -75,6 +76,11 @@ final class CannedMysqlLink implements MysqlLink
     public function isClosed(): bool
     {
         return false;
+    }
+
+    public function jsonDepth(): int
+    {
+        return 100;
     }
 
     /**

@@ -2,6 +2,21 @@
 
 Notable changes to `kinetis/orm`, newest first.
 
+## 1.16.0
+
+### Added
+
+- `OrmFactory::jsonDepth()` and `EntityManager::jsonDepth()` return the connection's JSON depth: the most levels of nested arrays and objects a JSON property holds, as the server stores them.
+
+### Fixed
+
+- A JSON property's value nested deeper than the server stores is refused with `MappingException` from `persist()` or `flush()`, naming the entity class, the property and the limit, before any SQL. It no longer reaches the server and fails there with a driver error.
+
+### Changed
+
+- The JSON depth is the connection's server's instead of 511 levels everywhere: 100 on MySQL, 31 on MariaDB before 12.2, and 2499 on MariaDB 12.2 and later and on PostgreSQL. `OrmFactory::create()` reads it once from the link through `Kinetis\Persistence\Contract\ReportsJsonDepth`, refuses a link that does not implement it with `InvalidArgumentException`, and on a MySQL-family link opens a connection when none is open yet. Loading decodes at that depth, so a stored document nested deeper throws `MappingException` on load.
+- A link class defined outside `kinetis/persistence` must now implement `ReportsJsonDepth` before `OrmFactory::create()` accepts it.
+
 ## 1.15.0
 
 ### Added
