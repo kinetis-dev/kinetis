@@ -698,7 +698,7 @@
             "description": "Twig templates for kinetis/views.",
             "namespace": "Kinetis\\ViewsTwig\\",
             "testNamespace": "Kinetis\\ViewsTwig\\Tests\\",
-            "version": "1.0.5",
+            "version": "1.0.6",
             "requires": [
                 "views"
             ],
@@ -706,7 +706,7 @@
                 "framework"
             ],
             "require": {
-                "twig/twig": "^3.28.0"
+                "twig/twig": "^3.31.1"
             },
             "conflict": {
                 "kinetis/views-latte": "*",
