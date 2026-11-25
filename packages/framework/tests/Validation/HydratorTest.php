@@ -29,6 +29,8 @@ use Kinetis\Tests\Validation\Fixtures\ListOfOnAStringRequest;
 use Kinetis\Tests\Validation\Fixtures\EnumDefaultRequest;
 use Kinetis\Tests\Validation\Fixtures\MutuallyRecursiveParent;
 use Kinetis\Tests\Validation\Fixtures\NestedObjectDefaultRequest;
+use Kinetis\Tests\Validation\Fixtures\KeptObjectMapRequest;
+use Kinetis\Tests\Validation\Fixtures\KeptObjectMapRuleRequest;
 use Kinetis\Tests\Validation\Fixtures\NestedObjectMapRequest;
 use Kinetis\Tests\Validation\Fixtures\NoConstructorFixture;
 use Kinetis\Tests\Validation\Fixtures\NullTypedFieldRequest;
@@ -60,6 +62,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\UploadedFileInterface;
 use ReflectionParameter;
+use stdClass;
 
 final class HydratorTest extends TestCase
 {
@@ -816,6 +819,123 @@ final class HydratorTest extends TestCase
         self::assertSame(['limits' => ['perPage' => 20], 'tags' => ['a']], $dto->meta);
     }
 
+    public function test_an_object_map_without_keep_objects_turns_every_nested_object_into_an_array(): void
+    {
+        $dto = Hydrator::hydrate(ObjectMapFieldRequest::class, self::decodedBody(
+            '{"name": "Alon", "meta": {"a": {}, "b": [], "c": {"d": {}}}}',
+        ));
+
+        self::assertSame(['a' => [], 'b' => [], 'c' => ['d' => []]], $dto->meta);
+    }
+
+    /**
+     * keepObjects hands the method the tree json_decode() built: the
+     * top level is still the member array, every nested object a
+     * stdClass and every array a list, so encoding it again reproduces
+     * the request.
+     */
+    public function test_an_object_map_with_keep_objects_keeps_nested_objects_and_lists_distinct(): void
+    {
+        $json = '{"a":{},"b":[],"c":{"d":{}},"e":[{"f":{}},[]],"g":"x"}';
+        $dto = Hydrator::hydrate(KeptObjectMapRequest::class, self::decodedBody('{"values": ' . $json . '}'));
+
+        self::assertSame(['a', 'b', 'c', 'e', 'g'], array_keys($dto->values));
+        self::assertInstanceOf(stdClass::class, $dto->values['a']);
+        self::assertSame([], $dto->values['b']);
+        self::assertInstanceOf(stdClass::class, $dto->values['c']);
+        self::assertInstanceOf(stdClass::class, $dto->values['c']->d);
+        self::assertSame($json, json_encode($dto->values, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_an_empty_json_object_fills_a_keep_objects_map_as_an_empty_array(): void
+    {
+        $dto = Hydrator::hydrate(KeptObjectMapRequest::class, self::decodedBody('{"values": {}}'));
+
+        self::assertSame([], $dto->values);
+    }
+
+    public function test_a_keep_objects_maps_rules_read_the_value_the_property_receives(): void
+    {
+        $dto = Hydrator::hydrate(KeptObjectMapRuleRequest::class, self::decodedBody('{"settings": {"box": {}}}'));
+
+        self::assertEquals(['box' => new stdClass()], $dto->settings);
+
+        try {
+            Hydrator::hydrate(KeptObjectMapRuleRequest::class, self::decodedBody('{"settings": {"box": []}}'));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['settings'], $e->violations[0]->path);
+            self::assertSame('members_are_objects', $e->violations[0]->code);
+        }
+    }
+
+    /**
+     * @return iterable<string, array{0: string, 1: string}>
+     */
+    public static function keepObjectsRefusalProvider(): iterable
+    {
+        yield 'a JSON array' => ['{"values": [{}]}', 'not_a_json_object'];
+        yield 'an empty JSON array' => ['{"values": []}', 'not_a_json_object'];
+        yield 'a scalar' => ['{"values": "x"}', 'type_mismatch'];
+        yield 'a null' => ['{"values": null}', 'null_not_allowed'];
+    }
+
+    #[DataProvider('keepObjectsRefusalProvider')]
+    public function test_a_keep_objects_map_refuses_what_an_object_map_refuses(string $json, string $code): void
+    {
+        try {
+            Hydrator::hydrate(KeptObjectMapRequest::class, self::decodedBody($json));
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertCount(1, $e->violations);
+            self::assertSame(['values'], $e->violations[0]->path);
+            self::assertSame($code, $e->violations[0]->code);
+        }
+    }
+
+    public function test_an_unmarked_php_map_cannot_fill_a_keep_objects_map(): void
+    {
+        try {
+            Hydrator::hydrate(KeptObjectMapRequest::class, ['values' => ['a' => []]]);
+            self::fail('Expected a ValidationException.');
+        } catch (ValidationException $e) {
+            self::assertSame(['values'], $e->violations[0]->path);
+            self::assertSame('not_a_json_object', $e->violations[0]->code);
+        }
+    }
+
+    /**
+     * The option survives the artifact the build writes: the plan is
+     * exported, read back, validated, and binds exactly as live
+     * reflection does.
+     */
+    public function test_keep_objects_survives_a_compiled_plan_artifact(): void
+    {
+        $plan = Hydrator::compilePlan(KeptObjectMapRequest::class);
+        self::assertTrue($plan['parameters'][0]['objectMap']);
+        self::assertTrue($plan['parameters'][0]['keepObjects']);
+
+        $file = tempnam(sys_get_temp_dir(), 'kinetis-plan-');
+        self::assertIsString($file);
+        file_put_contents($file, '<?php return ' . var_export($plan, true) . ';');
+
+        try {
+            $exported = require $file;
+        } finally {
+            unlink($file);
+        }
+
+        self::assertIsArray($exported);
+        Hydrator::validatePlans([KeptObjectMapRequest::class => $exported]);
+        self::assertSame($plan, $exported);
+
+        $data = self::decodedBody('{"values": {"a": {}, "b": []}}');
+        $compiled = Hydrator::hydrate(KeptObjectMapRequest::class, $data, $plan);
+
+        self::assertEquals(Hydrator::hydrate(KeptObjectMapRequest::class, $data), $compiled);
+        self::assertSame('{"a":{},"b":[]}', json_encode($compiled->values, JSON_THROW_ON_ERROR));
+    }
+
     public function test_an_object_map_property_inside_a_nested_dto_hydrates_under_its_own_path(): void
     {
         $dto = Hydrator::hydrate(NestedObjectMapRequest::class, self::decodedBody(
@@ -907,7 +1027,9 @@ final class HydratorTest extends TestCase
         $plan = Hydrator::compilePlan(ObjectMapFieldRequest::class);
 
         self::assertFalse($plan['parameters'][0]['objectMap']);
+        self::assertFalse($plan['parameters'][0]['keepObjects']);
         self::assertTrue($plan['parameters'][1]['objectMap']);
+        self::assertFalse($plan['parameters'][1]['keepObjects']);
         self::assertNull($plan['parameters'][1]['listItem']);
     }
 
@@ -1650,6 +1772,7 @@ final class HydratorTest extends TestCase
                 'nestedPlan' => null,
                 'listItem' => null,
                 'objectMap' => false,
+                'keepObjects' => false,
                 'absent' => false,
                 'hasDefault' => true,
                 'defaultValue' => $parameter->getDefaultValue(),

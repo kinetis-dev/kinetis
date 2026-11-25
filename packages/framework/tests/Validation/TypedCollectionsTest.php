@@ -421,7 +421,7 @@ final class TypedCollectionsTest extends TestCase
 
         self::assertSame([
             'name', 'scalarType', 'enumClass', 'dtoClass', 'nestedPlan', 'listItem',
-            'objectMap', 'absent', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
+            'objectMap', 'keepObjects', 'absent', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
         ], array_keys($plan['parameters'][0]));
 
         self::assertSame([

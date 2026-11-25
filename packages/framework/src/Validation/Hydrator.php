@@ -62,7 +62,9 @@ use ReflectionUnionType;
  *   passes before the field's own rules ever see the list. See
  *   listItem().
  * - A parameter typed `array` carrying #[ObjectMap]: a JSON object of
- *   arbitrary keys, handed to the constructor as its plain array form.
+ *   arbitrary keys, handed to the constructor as an array of its
+ *   members, nested objects as plain arrays or, with keepObjects, as
+ *   stdClass instances.
  *   Unlike every other accepted shape, this one admits only a value
  *   carrying JsonObject provenance — see resolveObjectMap().
  * - A nullable variant of any of the above.
@@ -182,6 +184,7 @@ use ReflectionUnionType;
  *     nestedPlan: ?array<string, mixed>,
  *     listItem: ?array<string, mixed>,
  *     objectMap: bool,
+ *     keepObjects: bool,
  *     absent: bool,
  *     hasDefault: bool,
  *     defaultValue: mixed,
@@ -257,7 +260,7 @@ final class Hydrator
 
     private const array HYDRATION_PLAN_PARAMETER_KEYS = [
         'name', 'scalarType', 'enumClass', 'dtoClass', 'nestedPlan', 'listItem',
-        'objectMap', 'absent', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
+        'objectMap', 'keepObjects', 'absent', 'hasDefault', 'defaultValue', 'allowsNull', 'constraints',
     ];
 
     private const array HYDRATION_PLAN_LIST_ITEM_KEYS = [
@@ -418,6 +421,7 @@ final class Hydrator
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'enumClass');
             ArtifactValidation::nullableString($parameter, 'HydrationPlanParameter', 'dtoClass');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'objectMap');
+            ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'keepObjects');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'absent');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'hasDefault');
             ArtifactValidation::bool($parameter, 'HydrationPlanParameter', 'allowsNull');
@@ -524,7 +528,8 @@ final class Hydrator
             'dtoClass' => $dtoClass,
             'nestedPlan' => $nestedPlan,
             'listItem' => $listItem,
-            'objectMap' => $objectMap,
+            'objectMap' => $objectMap !== null,
+            'keepObjects' => $objectMap !== null && $objectMap->keepObjects,
             'absent' => $absent !== null,
             'hasDefault' => $parameter->isDefaultValueAvailable(),
             'defaultValue' => ParameterDefault::capture($parameter, $class),
@@ -904,16 +909,16 @@ final class Hydrator
     }
 
     /**
-     * Whether this parameter carries #[ObjectMap], having first refused
+     * This parameter's #[ObjectMap], or null without one, having first refused
      * the two declarations that cannot mean anything: a type other than
      * builtin `array`, since the attribute exists only to pick which
      * JSON shape an `array` field admits and no other type offers that
      * choice; and #[ListOf] on the same parameter, whose JSON array is
      * precisely the shape #[ObjectMap] refuses.
      *
-     * The boolean is the whole plan entry: the attribute takes no
-     * options, so nothing else about it has to survive into an
-     * artifact.
+     * A plan records whether the attribute is present and its
+     * keepObjects option, so a compiled artifact binds exactly as live
+     * reflection does.
      *
      * Public for Kinetis\Validation\JsonSchema and
      * Kinetis\Mcp\McpDispatcher, which describe and bind the same
@@ -925,10 +930,12 @@ final class Hydrator
      *
      * @throws UnsupportedDtoDefinitionException
      */
-    public static function objectMap(ReflectionParameter $parameter, ?ReflectionType $type): bool
+    public static function objectMap(ReflectionParameter $parameter, ?ReflectionType $type): ?ObjectMap
     {
-        if ($parameter->getAttributes(ObjectMap::class) === []) {
-            return false;
+        $attributes = $parameter->getAttributes(ObjectMap::class);
+
+        if ($attributes === []) {
+            return null;
         }
 
         if (!$type instanceof ReflectionNamedType || $type->getName() !== 'array') {
@@ -939,7 +946,7 @@ final class Hydrator
             throw UnsupportedDtoDefinitionException::objectMapWithListOf(self::owner($parameter), $parameter->getName());
         }
 
-        return true;
+        return $attributes[0]->newInstance();
     }
 
     /**
@@ -1289,7 +1296,7 @@ final class Hydrator
 
             $resolved = self::resolveListValue($name, $value, $listItem, $source);
         } elseif ($parameter['objectMap']) {
-            return self::resolveObjectMap([$name], $value, $parameter['allowsNull'], $parameter['constraints']);
+            return self::resolveObjectMap([$name], $value, $parameter['allowsNull'], $parameter['keepObjects'], $parameter['constraints']);
         } else {
             // The one shared raw-scalar path, which runs the field's own
             // constraints itself. Reached by every parameter #[ListOf]
@@ -1479,15 +1486,18 @@ final class Hydrator
      * hand-built array both fall on that side: neither source has a JSON
      * object to preserve, so neither fills an #[ObjectMap] property.
      *
-     * unwrap() is recursive, so nested objects inside the map reach the
-     * property as plain arrays too, exactly like a `mixed` field's own
-     * contents.
+     * The parameter is always a PHP array of the object's members. By
+     * default unwrap() turns every nested JSON object into a plain array
+     * too, exactly like a `mixed` field's own contents; with $keepObjects
+     * JsonTree::objects() turns each into a stdClass and keeps every
+     * JSON array a list, so `{}` and `[]` stay distinct. The field's
+     * constraints read the same value the property receives.
      *
      * @param list<string|int> $path the caller's own path to this value
      * @param list<array{class: class-string<Constraint>, args: array<int|string, mixed>}> $constraints
      * @return array{0: mixed, 1: list<Violation>}
      */
-    public static function resolveObjectMap(array $path, mixed $value, bool $allowsNull, array $constraints = []): array
+    public static function resolveObjectMap(array $path, mixed $value, bool $allowsNull, bool $keepObjects, array $constraints = []): array
     {
         if ($value === null) {
             return $allowsNull ? [null, []] : [null, [self::nullNotAllowedViolation($path)]];
@@ -1497,7 +1507,9 @@ final class Hydrator
             return [null, [self::objectMapShapeViolation($path, $value)]];
         }
 
-        $map = JsonTree::unwrap($value);
+        $map = $keepObjects
+            ? array_map(JsonTree::objects(...), $value->toArray())
+            : JsonTree::unwrap($value);
 
         return [$map, self::constraintViolations($constraints, $map, $path)];
     }
