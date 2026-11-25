@@ -121,7 +121,7 @@ final class MysqliAsyncClient implements MysqlLink, ReportsJsonDepth
 
     private bool $closed = false;
 
-    /** The JSON depth of the server behind the last connection opened, null until one is. */
+    /** @var positive-int|null the JSON depth of the server behind the last connection opened, null until one is */
     private ?int $jsonDepth = null;
 
     /**
@@ -203,7 +203,7 @@ final class MysqliAsyncClient implements MysqlLink, ReportsJsonDepth
             $this->release($this->acquire());
         }
 
-        /** @var int connect() records it for every connection it opens */
+        /** @var positive-int connect() records it for every connection it opens */
         return $this->jsonDepth;
     }
 

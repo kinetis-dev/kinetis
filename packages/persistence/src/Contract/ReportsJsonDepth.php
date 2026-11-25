@@ -24,6 +24,9 @@ namespace Kinetis\Persistence\Contract;
  */
 interface ReportsJsonDepth
 {
-    /** The deepest nesting, in levels, a JSON column of this link's server stores and json_decode() reads back. */
+    /**
+     * @return positive-int the deepest nesting, in levels, a JSON column of
+     *         this link's server stores and json_decode() reads back
+     */
     public function jsonDepth(): int;
 }

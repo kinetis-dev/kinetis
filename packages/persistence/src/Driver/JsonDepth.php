@@ -26,6 +26,8 @@ final class JsonDepth
      * reports it, such as "9.7.4" or "11.4.13-MariaDB-ubu2404". A MariaDB
      * server may prefix its version with "5.5.5-"; the version after it
      * decides.
+     *
+     * @return positive-int
      */
     public static function mysql(string $serverVersion): int
     {
