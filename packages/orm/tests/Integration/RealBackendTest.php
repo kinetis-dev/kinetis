@@ -723,6 +723,94 @@ final class RealBackendTest extends TestCase
     }
 
     /**
+     * A json value nests at most 31 arrays or objects, the most MariaDB's
+     * json_valid() check stores. At that depth a scalar leaf and an empty
+     * array or object leaf round-trip through json, jsonb and JSON alike;
+     * one level deeper is refused by an insert and by an update before any
+     * statement runs, so the stored rows stay as they were.
+     *
+     * @param 'mysql'|'pgsql' $dialect
+     * @param 'native'|'pdo' $driver
+     */
+    #[DataProvider('drivers')]
+    public function test_json_nested_to_the_depth_limit_round_trips_and_one_level_deeper_is_refused_before_sql(
+        string $dialect,
+        string $driver,
+    ): void {
+        $factory = $this->factory($dialect, $driver);
+        $entities = $factory->open();
+        $survey = new StoredSurvey();
+        [$survey->id, $survey->answers, $survey->extra] = [1, self::nest(31, 1, false), self::nest(30, [], false)];
+        $payload = new StoredPayload();
+        $payload->id = 1;
+        $payload->body = self::nest(31, 'leaf', true);
+        $payload->meta = self::nest(30, new stdClass(), true);
+        $payload->document = self::nest(30, new stdClass(), false);
+        $payload->draft = self::nest(30, [], false);
+        $entities->persist($survey);
+        $entities->persist($payload);
+        $entities->flush();
+
+        $entities = $factory->open();
+        $loaded = $entities->repository(StoredSurvey::class)->findOrFail(1);
+        self::assertSame([$survey->answers, $survey->extra], [$loaded->answers, $loaded->extra]);
+        $loadedPayload = $entities->repository(StoredPayload::class)->findOrFail(1);
+
+        foreach (['body', 'meta', 'document', 'draft'] as $property) {
+            self::assertSame(json_encode($payload->{$property}), json_encode($loadedPayload->{$property}), $property);
+        }
+
+        $deeper = new StoredSurvey();
+        [$deeper->id, $deeper->answers, $deeper->extra] = [2, self::nest(32, 1, false), null];
+        $deeperPayload = new StoredPayload();
+        [$deeperPayload->id, $deeperPayload->body, $deeperPayload->meta] = [2, self::nest(32, 1, true), null];
+        $deeperPayload->document = [];
+        $deeperPayload->draft = null;
+        $refusals = [
+            'insert' => static fn () => $factory->open()->persist($deeper),
+            'object insert' => static fn () => $factory->open()->persist($deeperPayload),
+            'update' => static function () use ($entities, $loaded): void {
+                $loaded->extra = self::nest(31, [], false);
+                $entities->flush();
+            },
+        ];
+
+        foreach ($refusals as $write => $refused) {
+            try {
+                $refused();
+                self::fail("The {$write} was accepted.");
+            } catch (MappingException $e) {
+                self::assertStringContainsString('at most 31 levels deep', $e->getMessage(), $write);
+            }
+        }
+
+        self::assertSame(
+            [['id' => 1, 'extra_data' => json_encode($survey->extra)]],
+            array_map(
+                static fn (array $row): array => ['id' => (int) $row['id'], 'extra_data' => json_encode(json_decode((string) $row['extra_data']))],
+                new Query($this->link())->table('kin_orm_surveys')->select('id', 'extra_data')->get(),
+            ),
+        );
+        self::assertSame(1, new Query($this->link())->table('kin_orm_payloads')->count());
+    }
+
+    /**
+     * $leaf wrapped in $levels lists, or in $levels objects with one member
+     * each when $objects is set.
+     *
+     * @return ($objects is true ? stdClass : list<mixed>)
+     */
+    private static function nest(int $levels, mixed $leaf, bool $objects): stdClass|array
+    {
+        for ($level = 0; $level < $levels; $level++) {
+            $leaf = $objects ? (object) ['a' => $leaf] : [$leaf];
+        }
+
+        /** @var stdClass|list<mixed> $leaf */
+        return $leaf;
+    }
+
+    /**
      * $value with every stdClass's properties in key order: jsonb and the
      * MySQL family keep their own key order.
      */

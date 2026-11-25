@@ -1528,23 +1528,26 @@ $entities->flush(); // UPDATE webhooks SET headers = ?, payload = ? WHERE id = ?
   inspects the schema.
 - **Value.** An `array` property's value is an array whose leaves are
   `null`, a bool, an int, a finite float or a valid UTF-8 string, with
-  int or valid UTF-8 string keys, nested at most 511 arrays deep. An
+  int or valid UTF-8 string keys, nested at most 31 arrays deep. An
   object anywhere in it (a `stdClass`, a `JsonSerializable`, a
   `DateTimeImmutable`, an enum case), `INF`, `NAN`, a malformed UTF-8
   string or deeper nesting throws `MappingException` from `persist()` or
   `flush()` before SQL. A `stdClass` property's value is a `stdClass`,
   and an `array|stdClass` property's a `stdClass` or a list, holding
   the same leaves, lists and `stdClass` instances, with valid UTF-8
-  property names, nested at most 511 lists and objects deep together. An
+  property names, nested at most 31 lists and objects deep together. An
   array with keys other than `0` to `n-1` in order, a subclass of
   `stdClass`, any other object, a property name starting with a NUL
   byte, which `json_encode()` skips, or the refusals above throw
-  `MappingException` the same way.
+  `MappingException` the same way. The outermost array or object is the
+  first level. 31 levels is the most every supported database stores,
+  since the MariaDB `JSON` column's `json_valid()` check refuses 32, so
+  deeper nesting is refused before it can reach the server.
 - **Loading.** A driver value is the JSON text of an array or object.
   An `array` property decodes it with
-  `json_decode($text, true, 512, JSON_THROW_ON_ERROR)` into an array. A
+  `json_decode($text, true, 32, JSON_THROW_ON_ERROR)` into an array. A
   `stdClass` or `array|stdClass` property decodes it with
-  `json_decode($text, false, 512, JSON_THROW_ON_ERROR)`, so every JSON
+  `json_decode($text, false, 32, JSON_THROW_ON_ERROR)`, so every JSON
   object at any depth is a `stdClass` and every JSON array a list; a
   `stdClass` property refuses a top-level array. SQL `NULL` is admitted
   where the property is nullable. Malformed JSON, a top-level scalar or

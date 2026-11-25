@@ -29,13 +29,13 @@ use stdClass;
  */
 final class JsonColumnTest extends TestCase
 {
-    private const string EXPECTED = 'takes an array of null, bool, int, finite float, UTF-8 string and nested array values at most 511 levels deep, or the JSON text of one';
+    private const string EXPECTED = 'takes an array of null, bool, int, finite float, UTF-8 string and nested array values at most 31 levels deep, or the JSON text of one';
 
     private const string ANSWERS = ' It maps to table "surveys", column "answers".';
 
-    private const string OBJECT_EXPECTED = 'takes a stdClass of null, bool, int, finite float, UTF-8 string, list and nested stdClass values at most 511 levels deep, or the JSON text of a JSON object';
+    private const string OBJECT_EXPECTED = 'takes a stdClass of null, bool, int, finite float, UTF-8 string, list and nested stdClass values at most 31 levels deep, or the JSON text of a JSON object';
 
-    private const string OBJECT_OR_LIST_EXPECTED = 'takes a stdClass or a list of null, bool, int, finite float, UTF-8 string, list and stdClass values at most 511 levels deep, or the JSON text of a JSON object or array';
+    private const string OBJECT_OR_LIST_EXPECTED = 'takes a stdClass or a list of null, bool, int, finite float, UTF-8 string, list and stdClass values at most 31 levels deep, or the JSON text of a JSON object or array';
 
     private const string BODY = ' It maps to table "payloads", column "body".';
 
@@ -123,7 +123,7 @@ final class JsonColumnTest extends TestCase
         yield 'malformed JSON' => ['{"a":'];
         yield 'an empty string' => [''];
         yield 'a number beyond the float range' => ['{"a": 1e999}'];
-        yield 'nesting beyond the decode depth' => [self::nested(512)];
+        yield 'nesting beyond the decode depth' => [self::nested(32)];
         yield 'an int' => [1];
     }
 
@@ -143,8 +143,8 @@ final class JsonColumnTest extends TestCase
 
     public function test_the_deepest_admitted_nesting_loads_and_writes(): void
     {
-        $deepest = self::nested(511);
-        $this->link->queue([['id' => 1, 'answers' => json_encode($deepest, depth: 512), 'extra_data' => null]]);
+        $deepest = self::nested(31);
+        $this->link->queue([['id' => 1, 'answers' => json_encode($deepest), 'extra_data' => null]]);
 
         $survey = $this->entities->repository(Survey::class)->findOrFail(1);
         self::assertSame($deepest, $survey->answers);
@@ -154,6 +154,22 @@ final class JsonColumnTest extends TestCase
         $this->entities->flush();
 
         self::assertCount(1, $this->transaction->calls);
+    }
+
+    public function test_a_managed_value_nested_one_level_too_deep_is_refused_before_the_update(): void
+    {
+        $this->link->queue([['id' => 1, 'answers' => '[]', 'extra_data' => null]]);
+        $survey = $this->entities->repository(Survey::class)->findOrFail(1);
+        $survey->answers = self::nested(32);
+
+        try {
+            $this->entities->flush();
+            self::fail('The value was accepted.');
+        } catch (MappingException $e) {
+            self::assertSame(Survey::class . '::$answers ' . self::EXPECTED . ', got array.' . self::ANSWERS, $e->getMessage());
+        }
+
+        self::assertSame([], $this->transaction->calls);
     }
 
     /**
@@ -175,7 +191,7 @@ final class JsonColumnTest extends TestCase
         yield 'a nested NAN' => [['a' => ['b' => NAN]]];
         yield 'a malformed UTF-8 string' => [["\xC3\x28"]];
         yield 'a malformed UTF-8 key' => [["\xFF" => 1]];
-        yield 'nesting beyond the decode depth' => [self::nested(512)];
+        yield 'nesting beyond the decode depth' => [self::nested(32)];
     }
 
     /**
@@ -345,7 +361,7 @@ final class JsonColumnTest extends TestCase
         yield 'a JSON null for a union property' => ['document', 'null', 'string'];
         yield 'malformed JSON' => ['body', '{"a":', 'string'];
         yield 'a key the decoder cannot name a property' => ['body', '{"\u0000a": 1}', 'string'];
-        yield 'mixed nesting beyond the decode depth' => ['document', json_encode(self::mixed(512), depth: 600), 'string'];
+        yield 'mixed nesting beyond the decode depth' => ['document', json_encode(self::mixed(32)), 'string'];
         yield 'SQL NULL in a non-nullable column' => ['body', null, 'null'];
         yield 'an int' => ['document', 1, 'int'];
     }
@@ -372,8 +388,8 @@ final class JsonColumnTest extends TestCase
 
     public function test_the_deepest_admitted_mixed_nesting_loads_and_writes(): void
     {
-        $deepest = self::mixed(511);
-        $this->link->queue([['id' => 1, 'body' => '{}', 'meta_data' => null, 'document' => json_encode($deepest, depth: 512), 'draft' => null]]);
+        $deepest = self::mixed(31);
+        $this->link->queue([['id' => 1, 'body' => '{}', 'meta_data' => null, 'document' => json_encode($deepest), 'draft' => null]]);
         $entities = $this->payloads();
 
         $payload = $entities->repository(Payload::class)->findOrFail(1);
@@ -396,7 +412,7 @@ final class JsonColumnTest extends TestCase
         yield 'a key json_encode() drops' => ['body', (object) ["\0a" => 1]];
         yield 'INF inside an object' => ['body', (object) ['a' => INF]];
         yield 'NAN in a list inside an object' => ['document', [(object) ['a' => [NAN]]]];
-        yield 'mixed nesting beyond the decode depth' => ['document', self::mixed(512)];
+        yield 'mixed nesting beyond the decode depth' => ['document', self::mixed(32)];
         yield 'a stdClass subclass' => ['body', new class extends stdClass {}];
         yield 'a nested stdClass subclass' => ['document', [new class extends stdClass {}]];
         yield 'a nested JsonSerializable' => ['body', (object) ['a' => new class implements JsonSerializable {

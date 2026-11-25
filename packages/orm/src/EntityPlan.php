@@ -32,7 +32,7 @@ use stdClass;
  * 9999, and a string loads as a DateTimeImmutable in UTC; a date is a Date
  * or its exact "Y-m-d" string, and a string loads as a Date; a json value
  * is an array whose leaves are null, bool, int, finite float or UTF-8
- * string, nested no deeper than json_decode() reads at depth 512, or the
+ * string, nested at most 31 arrays deep, or the
  * JSON text of one, and a string loads decoded into arrays; a jsonObject
  * value is a stdClass, and a jsonObjectOrList value a stdClass or a list,
  * whose members are those leaves, lists and exact stdClass instances
@@ -78,10 +78,12 @@ final class EntityPlan
     private const string TIMESTAMP = '/^(?!0000)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D';
 
     /**
-     * json_decode()'s depth: it counts the scalar level too, so it reads
-     * one array level fewer, which bounds the arrays a json value admits.
+     * json_decode()'s depth: it counts one level more than the arrays and
+     * objects it reads, so a json value nests at most 31 of them. That is
+     * the most every supported database stores: MariaDB's json_valid()
+     * check refuses 32 and MySQL refuses 101, whatever the leaf.
      */
-    private const int JSON_DEPTH = 512;
+    private const int JSON_DEPTH = 32;
 
     private const int JSON_ENCODE = JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION;
 
