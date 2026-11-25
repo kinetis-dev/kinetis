@@ -20,6 +20,8 @@ use ReflectionClass;
 use ReflectionEnum;
 use ReflectionNamedType;
 use ReflectionProperty;
+use ReflectionUnionType;
+use stdClass;
 
 /**
  * The mapping of an explicit set of entity classes, held as plain data:
@@ -48,7 +50,10 @@ use ReflectionProperty;
  * DateTimeImmutable are refused as declared types. A property declared
  * exactly Kinetis\Orm\Date, nullable or not, has the type date. A property
  * declared array, nullable or not, has the type json unless #[HasMany] or
- * #[ManyToMany] makes it a relationship collection.
+ * #[ManyToMany] makes it a relationship collection. A property declared
+ * exactly stdClass, nullable or not, has the type jsonObject, and one
+ * declared array|stdClass, nullable or not, has the type jsonObjectOrList;
+ * no other union is mapped.
  *
  * Every entity lives on one named connection, `default` unless #[Entity]
  * names another, and a relationship of any kind joins two entities of the
@@ -58,11 +63,11 @@ use ReflectionProperty;
  * target. Each entity class is the target of at most one of them, so one
  * mapping alone decides how a row is discovered, removed and orphaned.
  *
- * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
+ * @phpstan-type PropertyMapping array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json'|'jsonObject'|'jsonObjectOrList', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @phpstan-type InverseMapping array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @phpstan-type JoinMapping array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
  * @phpstan-type EntityMapping array{class: class-string, table: string, connection: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
- * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
+ * @psalm-type PropertyMapping = array{name: string, column: string, type: 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json'|'jsonObject'|'jsonObjectOrList', nullable: bool, enum: class-string<BackedEnum>|null, target: class-string|null}
  * @psalm-type InverseMapping = array{name: string, kind: 'hasOne'|'hasMany', target: class-string, mappedBy: string, nullable: bool, owned: bool}
  * @psalm-type JoinMapping = array{name: string, target: class-string, table: string, joinColumn: string, inverseJoinColumn: string, mappedBy: string|null}
  * @psalm-type EntityMapping = array{class: class-string, table: string, connection: string, id: string, generated: bool, version: string|null, properties: list<PropertyMapping>, inverses: list<InverseMapping>, joins: list<JoinMapping>}
@@ -89,6 +94,8 @@ final readonly class MetadataRegistry
     private const string CARRIES_ID = 'it also carries #[Id]';
 
     private const string CARRIES_VERSION = 'it also carries #[Version]';
+
+    private const array RELATIONSHIPS = [BelongsTo::class, HasOne::class, HasMany::class, ManyToMany::class];
 
     /**
      * @param list<EntityMapping> $entities ordered by class name
@@ -385,7 +392,7 @@ final readonly class MetadataRegistry
             }
 
             $type = self::type($name, $property);
-            $join = self::join($name, $property, $type);
+            $join = $type instanceof ReflectionNamedType ? self::join($name, $property, $type) : null;
 
             if ($join !== null) {
                 $joins[] = $join;
@@ -393,7 +400,7 @@ final readonly class MetadataRegistry
                 continue;
             }
 
-            $inverse = self::inverse($name, $property, $type);
+            $inverse = $type instanceof ReflectionNamedType ? self::inverse($name, $property, $type) : null;
 
             if ($inverse !== null) {
                 $inverses[] = $inverse;
@@ -473,9 +480,10 @@ final readonly class MetadataRegistry
 
     /**
      * The refusals every non-static property shares, column or inverse
-     * relationship.
+     * relationship. The one composite type returned is array|stdClass,
+     * nullable or not, on a property no relationship attribute marks.
      */
-    private static function type(string $class, ReflectionProperty $property): ReflectionNamedType
+    private static function type(string $class, ReflectionProperty $property): ReflectionNamedType|ReflectionUnionType
     {
         $name = $property->getName();
         $type = $property->getType();
@@ -496,29 +504,47 @@ final readonly class MetadataRegistry
 
         // `?T` and `T|null` both reflect as a named type; every other
         // union, and every intersection, does not.
-        if (!$type instanceof ReflectionNamedType) {
-            throw MappingException::unsupportedProperty($class, $name, "declares the composite type {$type}");
+        if ($type instanceof ReflectionNamedType || ($type instanceof ReflectionUnionType && self::objectOrList($property, $type))) {
+            return $type;
         }
 
-        return $type;
+        throw MappingException::unsupportedProperty($class, $name, "declares the composite type {$type}");
+    }
+
+    /** Whether $type is array|stdClass, nullable or not, on a property no relationship attribute marks. */
+    private static function objectOrList(ReflectionProperty $property, ReflectionUnionType $type): bool
+    {
+        foreach (self::RELATIONSHIPS as $attribute) {
+            if ($property->getAttributes($attribute) !== []) {
+                return false;
+            }
+        }
+
+        $names = array_diff(array_map(strval(...), $type->getTypes()), ['null']);
+        sort($names, SORT_STRING);
+
+        return $names === ['array', stdClass::class];
     }
 
     /**
      * @return PropertyMapping
      */
-    private static function property(string $class, ReflectionProperty $property, ReflectionNamedType $type): array
+    private static function property(string $class, ReflectionProperty $property, ReflectionNamedType|ReflectionUnionType $type): array
     {
         $name = $property->getName();
         $relationship = ($property->getAttributes(BelongsTo::class)[0] ?? null)?->newInstance();
 
-        if ($relationship !== null) {
+        // type() admits a union only on a property without #[BelongsTo].
+        if ($relationship !== null && $type instanceof ReflectionNamedType) {
             return self::relationship($class, $property, $type, $relationship);
         }
 
-        $typeName = $type->getName();
+        $typeName = $type instanceof ReflectionNamedType ? $type->getName() : null;
         $enum = null;
 
-        if (in_array($typeName, self::SCALAR_TYPES, true)) {
+        if ($typeName === null) {
+            $scalar = 'jsonObjectOrList';
+        } elseif (in_array($typeName, self::SCALAR_TYPES, true)) {
             $scalar = $typeName;
         } elseif ($typeName === DateTimeImmutable::class) {
             $scalar = 'timestamp';
@@ -526,6 +552,8 @@ final readonly class MetadataRegistry
             $scalar = 'date';
         } elseif ($typeName === 'array') {
             $scalar = 'json';
+        } elseif ($typeName === stdClass::class) {
+            $scalar = 'jsonObject';
         } elseif (!$type->isBuiltin() && is_subclass_of($typeName, BackedEnum::class)) {
             $enum = $typeName;
             $scalar = new ReflectionEnum($typeName)->getBackingType()?->getName() === 'int' ? 'int' : 'string';
@@ -533,7 +561,7 @@ final readonly class MetadataRegistry
             throw MappingException::unsupportedProperty(
                 $class,
                 $name,
-                "declares {$typeName}, which is not string, int, float, bool, array, DateTimeImmutable, " . Date::class . ' or a backed enum',
+                "declares {$typeName}, which is not string, int, float, bool, array, stdClass, DateTimeImmutable, " . Date::class . ' or a backed enum',
             );
         }
 
@@ -543,7 +571,7 @@ final readonly class MetadataRegistry
             throw MappingException::invalidColumn($class, $name, $column);
         }
 
-        /** @var 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json' $scalar */
+        /** @var 'string'|'int'|'float'|'bool'|'timestamp'|'date'|'json'|'jsonObject'|'jsonObjectOrList' $scalar */
         return ['name' => $name, 'column' => $column, 'type' => $scalar, 'nullable' => $type->allowsNull(), 'enum' => $enum, 'target' => null];
     }
 

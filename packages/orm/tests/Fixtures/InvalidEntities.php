@@ -26,6 +26,7 @@ use Kinetis\Orm\Tests\Fixtures\ArticleCategory;
 use Kinetis\Orm\Tests\Fixtures\ArticleStatus;
 use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Priority;
+use stdClass;
 use Traversable;
 
 final class NotMarked
@@ -230,6 +231,68 @@ final class MixedProperty
     public int $id;
 
     public mixed $data;
+}
+
+#[Entity]
+final class ObjectProperty
+{
+    public int $id;
+
+    public object $data;
+}
+
+#[Entity]
+final class WideJsonUnion
+{
+    public int $id;
+
+    /** @var array<array-key, mixed>|stdClass|int */
+    public array|stdClass|int $data;
+}
+
+#[Entity]
+final class JsonUnionIdentifier
+{
+    /** @var list<mixed>|stdClass */
+    public array|stdClass $id;
+}
+
+#[Entity]
+final class StdClassVersion
+{
+    public int $id;
+
+    #[Version]
+    public stdClass $version;
+}
+
+#[Entity]
+final class JsonUnionHasMany
+{
+    public int $id;
+
+    /** @var list<self>|stdClass */
+    #[HasMany(target: self::class, mappedBy: 'parent')]
+    public array|stdClass $children;
+}
+
+#[Entity]
+final class JsonUnionManyToMany
+{
+    public int $id;
+
+    /** @var list<ArticleCategory>|stdClass */
+    #[ManyToMany(target: ArticleCategory::class, table: 'j', joinColumn: 'a_id', inverseJoinColumn: 'b_id')]
+    public array|stdClass $categories;
+}
+
+#[Entity]
+final class StdClassRelationship
+{
+    public int $id;
+
+    #[BelongsTo]
+    public stdClass $parent;
 }
 
 enum Suit

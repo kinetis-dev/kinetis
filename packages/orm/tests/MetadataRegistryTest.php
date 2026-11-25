@@ -28,6 +28,7 @@ use Kinetis\Orm\Tests\Fixtures\Metric;
 use Kinetis\Orm\Tests\Fixtures\Organization;
 use Kinetis\Orm\Tests\Fixtures\Parcel;
 use Kinetis\Orm\Tests\Fixtures\Part;
+use Kinetis\Orm\Tests\Fixtures\Payload;
 use Kinetis\Orm\Tests\Fixtures\Peer;
 use Kinetis\Orm\Tests\Fixtures\Post;
 use Kinetis\Orm\Tests\Fixtures\Priority;
@@ -176,6 +177,23 @@ final class MetadataRegistryTest extends TestCase
                 ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
                 ['name' => 'answers', 'column' => 'answers', 'type' => 'json', 'nullable' => false, 'enum' => null, 'target' => null],
                 ['name' => 'extra', 'column' => 'extra_data', 'type' => 'json', 'nullable' => true, 'enum' => null, 'target' => null],
+            ],
+            $data['entities'][0]['properties'],
+        );
+        self::assertSame($data, MetadataRegistry::fromArray($data)->toArray());
+    }
+
+    public function test_a_stdclass_property_and_an_array_stdclass_union_record_their_json_modes_and_round_trip(): void
+    {
+        $data = MetadataRegistry::fromClasses([Payload::class])->toArray();
+
+        self::assertSame(
+            [
+                ['name' => 'id', 'column' => 'id', 'type' => 'int', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'body', 'column' => 'body', 'type' => 'jsonObject', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'meta', 'column' => 'meta_data', 'type' => 'jsonObject', 'nullable' => true, 'enum' => null, 'target' => null],
+                ['name' => 'document', 'column' => 'document', 'type' => 'jsonObjectOrList', 'nullable' => false, 'enum' => null, 'target' => null],
+                ['name' => 'draft', 'column' => 'draft', 'type' => 'jsonObjectOrList', 'nullable' => true, 'enum' => null, 'target' => null],
             ],
             $data['entities'][0]['properties'],
         );
@@ -384,7 +402,7 @@ final class MetadataRegistryTest extends TestCase
         yield 'a json identifier' => [self::INVALID . 'ArrayIdentifier', 'ArrayIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
         yield 'a json version' => [self::INVALID . 'ArrayVersion', 'ArrayVersion has no usable version: the version property "version" must be typed int'];
         yield 'a relationship typed array' => [self::INVALID . 'ArrayRelationship', 'ArrayRelationship::$tags is not a usable #[BelongsTo] relationship: it declares array, which is not an entity class'];
-        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, array, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
+        yield 'a DateTime' => [self::INVALID . 'MutableDateProperty', 'MutableDateProperty::$publishedAt cannot be mapped: it declares DateTime, which is not string, int, float, bool, array, stdClass, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
         yield 'a DateTimeInterface' => [self::INVALID . 'DateInterfaceProperty', 'DateInterfaceProperty::$publishedAt cannot be mapped: it declares DateTimeInterface, which'];
         yield 'a DateTimeImmutable subclass' => [self::INVALID . 'DateSubclassProperty', 'DateSubclassProperty::$publishedAt cannot be mapped: it declares ' . self::INVALID . 'LocalDate, which'];
         yield 'a timestamp identifier' => [self::INVALID . 'TimestampIdentifier', 'TimestampIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
@@ -394,6 +412,13 @@ final class MetadataRegistryTest extends TestCase
         yield 'a date version' => [self::INVALID . 'DateVersion', 'DateVersion has no usable version: the version property "version" must be typed int'];
         yield 'a relationship typed DateTimeImmutable' => [self::INVALID . 'TimestampRelationship', 'TimestampRelationship::$publishedAt is not a usable #[BelongsTo] relationship: DateTimeImmutable is not an entity in this MetadataRegistry'];
         yield 'mixed' => [self::INVALID . 'MixedProperty', 'MixedProperty::$data cannot be mapped: it declares mixed'];
+        yield 'object' => [self::INVALID . 'ObjectProperty', 'ObjectProperty::$data cannot be mapped: it declares object, which is not string, int, float, bool, array, stdClass, DateTimeImmutable, ' . Date::class . ' or a backed enum'];
+        yield 'a union wider than array and stdClass' => [self::INVALID . 'WideJsonUnion', 'WideJsonUnion::$data cannot be mapped: it declares the composite type stdClass|array|int'];
+        yield 'an array and stdClass identifier' => [self::INVALID . 'JsonUnionIdentifier', 'JsonUnionIdentifier has no usable identifier: the identifier property "id" must be typed int or string'];
+        yield 'a stdClass version' => [self::INVALID . 'StdClassVersion', 'StdClassVersion has no usable version: the version property "version" must be typed int'];
+        yield 'a #[HasMany] typed array and stdClass' => [self::INVALID . 'JsonUnionHasMany', 'JsonUnionHasMany::$children cannot be mapped: it declares the composite type stdClass|array'];
+        yield 'a #[ManyToMany] typed array and stdClass' => [self::INVALID . 'JsonUnionManyToMany', 'JsonUnionManyToMany::$categories cannot be mapped: it declares the composite type stdClass|array'];
+        yield 'a relationship typed stdClass' => [self::INVALID . 'StdClassRelationship', 'StdClassRelationship::$parent is not a usable #[BelongsTo] relationship: stdClass is not an entity in this MetadataRegistry'];
         yield 'a unit enum' => [self::INVALID . 'UnitEnumProperty', 'UnitEnumProperty::$suit cannot be mapped: it declares ' . self::INVALID . 'Suit'];
         yield 'no identifier' => [self::INVALID . 'MissingIdentifier', 'no property carries #[Id] and none is named "id"'];
         yield 'two identifiers' => [self::INVALID . 'TwoIdentifiers', 'more than one property carries #[Id]: first, second'];
