@@ -2,6 +2,13 @@
 
 Notable changes to `kinetis/orm`, newest first.
 
+## 1.16.0
+
+### Fixed
+
+- A JSON property's value nests at most 31 arrays or objects, down from 511, because MariaDB's `JSON` column refuses 32 and MySQL's refuses 101. A deeper value throws `MappingException` from `persist()` or `flush()`, naming the entity class, the property and the 31-level limit, before any SQL; it no longer reaches the server and fails with a driver error on the MySQL family while PostgreSQL stores it.
+- Behavior change: loading decodes JSON text with `json_decode()` at depth 32, so a stored document nested deeper than 31 levels, written by other means, throws `MappingException` on load.
+
 ## 1.15.0
 
 ### Added
