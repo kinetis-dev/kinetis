@@ -51,7 +51,11 @@ final class NamedOrmConnectionTest extends TestCase
 
     public function test_a_named_connection_is_built_from_its_own_keys_and_dialect(): void
     {
-        $app = self::app([...self::DEFAULT, ...self::REPORTING], [Post::class, Report::class]);
+        $app = self::app(
+            [...self::DEFAULT, ...self::REPORTING],
+            [Post::class, Report::class],
+            static fn (AppScope $app) => $app->instance(MysqlLink::class, new RowsMysqlLink()),
+        );
         /** @var OrmFactoryRegistry $factories */
         $factories = $app->get(OrmFactoryRegistry::class);
         $reporting = self::linkOf($factories->factoryFor(Report::class));
@@ -117,7 +121,10 @@ final class NamedOrmConnectionTest extends TestCase
         $app = self::app(
             [...self::DEFAULT, ...self::REPORTING],
             [Post::class, Report::class],
-            static fn (AppScope $app) => $app->instance('db.reporting', $own),
+            static function (AppScope $app) use ($own): void {
+                $app->instance(MysqlLink::class, new RowsMysqlLink());
+                $app->instance('db.reporting', $own);
+            },
         );
         /** @var OrmFactoryRegistry $factories */
         $factories = $app->get(OrmFactoryRegistry::class);

@@ -812,7 +812,10 @@ final readonly class OrderController
   must be configured or bound before any ORM service resolves,
   `OrmFactory` and `EntityManager` included. It also holds a factory for
   the default connection whenever `DB_CONNECTION` is set, whether or not
-  an entity lives there.
+  an entity lives there. Building it reads each link's JSON depth, which
+  opens a connection to every MySQL or MariaDB link that has none open
+  yet, so each of those servers must be reachable then (the package
+  README's "JSON").
 - **One manager per connection per unit of work.** The request's
   `EntityManagerRegistry` opens `manager('reporting')`, or
   `managerFor(Order::class)`, once, and closes every manager it opened

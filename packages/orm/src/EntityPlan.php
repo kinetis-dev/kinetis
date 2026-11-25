@@ -32,7 +32,7 @@ use stdClass;
  * 9999, and a string loads as a DateTimeImmutable in UTC; a date is a Date
  * or its exact "Y-m-d" string, and a string loads as a Date; a json value
  * is an array whose leaves are null, bool, int, finite float or UTF-8
- * string, nested at most 31 arrays deep, or the
+ * string, nested at most the connection's JSON depth in arrays, or the
  * JSON text of one, and a string loads decoded into arrays; a jsonObject
  * value is a stdClass, and a jsonObjectOrList value a stdClass or a list,
  * whose members are those leaves, lists and exact stdClass instances
@@ -77,14 +77,6 @@ final class EntityPlan
      */
     private const string TIMESTAMP = '/^(?!0000)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D';
 
-    /**
-     * json_decode()'s depth: it counts one level more than the arrays and
-     * objects it reads, so a json value nests at most 31 of them. That is
-     * the most every supported database stores: MariaDB's json_valid()
-     * check refuses 32 and MySQL refuses 101, whatever the leaf.
-     */
-    private const int JSON_DEPTH = 32;
-
     private const int JSON_ENCODE = JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION;
 
     private const array JSON_TYPES = ['json', 'jsonObject', 'jsonObjectOrList'];
@@ -126,8 +118,9 @@ final class EntityPlan
 
     /**
      * @param EntityMapping $mapping
+     * @param positive-int $jsonDepth the levels of arrays and objects a json value of the connection nests at most
      */
-    public function __construct(array $mapping)
+    public function __construct(array $mapping, private readonly int $jsonDepth)
     {
         /** @var class-string<T> $class */
         $class = $mapping['class'];
@@ -276,7 +269,7 @@ final class EntityPlan
      */
     public function parameter(string $property, mixed $value): null|bool|int|float|string
     {
-        return self::databaseValue($this->convert($this->property($property), $value));
+        return $this->databaseValue($this->convert($this->property($property), $value));
     }
 
     /**
@@ -368,7 +361,7 @@ final class EntityPlan
      */
     public function snapshot(array $values): array
     {
-        return array_map(self::databaseValue(...), $values);
+        return array_map($this->databaseValue(...), $values);
     }
 
     /**
@@ -412,7 +405,7 @@ final class EntityPlan
                 }
             }
 
-            $values[$name] = self::databaseValue($this->convert($property, $value));
+            $values[$name] = $this->databaseValue($this->convert($property, $value));
         }
 
         return $values;
@@ -518,7 +511,7 @@ final class EntityPlan
                     $property['name'],
                     $this->table,
                     $property['column'],
-                    self::expected($property),
+                    $this->expected($property),
                     $value,
                 );
         }
@@ -534,9 +527,9 @@ final class EntityPlan
             'bool' => self::bool($value),
             'timestamp' => self::timestamp($value),
             'date' => self::date($value),
-            'json' => self::json($value),
-            'jsonObject' => self::jsonObject($value, false),
-            'jsonObjectOrList' => self::jsonObject($value, true),
+            'json' => $this->json($value),
+            'jsonObject' => $this->jsonObject($value, false),
+            'jsonObjectOrList' => $this->jsonObject($value, true),
         };
 
         if ($converted === null) {
@@ -545,7 +538,7 @@ final class EntityPlan
                 $property['name'],
                 $this->table,
                 $property['column'],
-                self::expected($property),
+                $this->expected($property),
                 $value,
             );
         }
@@ -566,14 +559,14 @@ final class EntityPlan
             );
     }
 
-    private static function databaseValue(mixed $converted): null|bool|int|float|string
+    private function databaseValue(mixed $converted): null|bool|int|float|string
     {
         /** @var null|bool|int|float|string|BackedEnum|DateTimeImmutable|Date|stdClass|array<array-key, mixed> $converted */
         return match (true) {
             $converted instanceof BackedEnum => $converted->value,
             $converted instanceof DateTimeImmutable => self::utc($converted),
             $converted instanceof Date => (string) $converted,
-            is_array($converted), $converted instanceof stdClass => json_encode($converted, self::JSON_ENCODE),
+            is_array($converted), $converted instanceof stdClass => json_encode($converted, self::JSON_ENCODE, $this->jsonDepth),
             default => $converted,
         };
     }
@@ -660,17 +653,17 @@ final class EntityPlan
      *
      * @return array<array-key, mixed>|null
      */
-    private static function json(mixed $value): ?array
+    private function json(mixed $value): ?array
     {
         if (is_string($value)) {
             try {
-                $value = json_decode($value, true, self::JSON_DEPTH, JSON_THROW_ON_ERROR);
+                $value = json_decode($value, true, $this->jsonDepth + 1, JSON_THROW_ON_ERROR);
             } catch (JsonException) {
                 return null;
             }
         }
 
-        return is_array($value) && self::jsonContainer($value, self::JSON_DEPTH - 1, false) ? $value : null;
+        return is_array($value) && self::jsonContainer($value, $this->jsonDepth, false) ? $value : null;
     }
 
     /**
@@ -681,11 +674,11 @@ final class EntityPlan
      *
      * @return stdClass|list<mixed>|null
      */
-    private static function jsonObject(mixed $value, bool $list): stdClass|array|null
+    private function jsonObject(mixed $value, bool $list): stdClass|array|null
     {
         if (is_string($value)) {
             try {
-                $value = json_decode($value, false, self::JSON_DEPTH, JSON_THROW_ON_ERROR);
+                $value = json_decode($value, false, $this->jsonDepth + 1, JSON_THROW_ON_ERROR);
             } catch (JsonException) {
                 return null;
             }
@@ -694,7 +687,7 @@ final class EntityPlan
         $admitted = self::isStdClass($value) || ($list && is_array($value) && array_is_list($value));
 
         /** @var stdClass|list<mixed> $value */
-        return $admitted && self::jsonContainer($value, self::JSON_DEPTH - 1, true) ? $value : null;
+        return $admitted && self::jsonContainer($value, $this->jsonDepth, true) ? $value : null;
     }
 
     /**
@@ -747,7 +740,7 @@ final class EntityPlan
     /**
      * @param PropertyMapping $property
      */
-    private static function expected(array $property): string
+    private function expected(array $property): string
     {
         $shape = match ($property['type']) {
             'string' => 'a string',
@@ -757,11 +750,11 @@ final class EntityPlan
             'timestamp' => 'a DateTimeImmutable, or a UTC "Y-m-d H:i:s" string with up to six fraction digits and no offset, in UTC years 0001 to 9999',
             'date' => 'a ' . Date::class . ', or a "Y-m-d" string naming a day that exists in years 0001 to 9999',
             'json' => 'an array of null, bool, int, finite float, UTF-8 string and nested array values at most '
-                . (self::JSON_DEPTH - 1) . ' levels deep, or the JSON text of one',
+                . $this->jsonDepth . ' levels deep, or the JSON text of one',
             'jsonObject' => 'a ' . stdClass::class . ' of null, bool, int, finite float, UTF-8 string, list and nested '
-                . stdClass::class . ' values at most ' . (self::JSON_DEPTH - 1) . ' levels deep, or the JSON text of a JSON object',
+                . stdClass::class . ' values at most ' . $this->jsonDepth . ' levels deep, or the JSON text of a JSON object',
             'jsonObjectOrList' => 'a ' . stdClass::class . ' or a list of null, bool, int, finite float, UTF-8 string, list and '
-                . stdClass::class . ' values at most ' . (self::JSON_DEPTH - 1) . ' levels deep, or the JSON text of a JSON object or array',
+                . stdClass::class . ' values at most ' . $this->jsonDepth . ' levels deep, or the JSON text of a JSON object or array',
         };
 
         if ($property['enum'] !== null) {

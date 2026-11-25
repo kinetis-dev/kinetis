@@ -82,7 +82,7 @@
             "description": "Kinetis wiring for kinetis/persistence and kinetis/orm: DB_* connection configuration and the default link binding, closed with the application scope, SQL spans through Kinetis telemetry, a lazy request-scoped TransactionGuard whose cleanup is registered once a scope resolves it, and, with kinetis/orm installed, AOT-compiled entity metadata, an ORM factory for every connection an entity names and a lazy request-scoped registry of entity managers.",
             "namespace": "Kinetis\\DatabaseBridge\\",
             "testNamespace": "Kinetis\\DatabaseBridge\\Tests\\",
-            "version": "1.4.6",
+            "version": "1.4.7",
             "requires": [
                 "framework",
                 "persistence"
@@ -719,7 +719,7 @@
             "description": "A runnable ping-pong demo application showcasing Kinetis: MySQL, migrations, mapped entities and a request-scoped unit of work over kinetis/orm, Redis-backed cache and queue, events, a cron-driven command, and real-time updates over kinetis/broadcasting, including a private channel.",
             "namespace": "App\\",
             "testNamespace": "App\\Tests\\",
-            "version": "1.4.11",
+            "version": "1.4.12",
             "type": "project",
             "requireDevOverride": {
                 "phpstan/phpstan": "^2.2.8",

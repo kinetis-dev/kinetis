@@ -1528,26 +1528,38 @@ $entities->flush(); // UPDATE webhooks SET headers = ?, payload = ? WHERE id = ?
   inspects the schema.
 - **Value.** An `array` property's value is an array whose leaves are
   `null`, a bool, an int, a finite float or a valid UTF-8 string, with
-  int or valid UTF-8 string keys, nested at most 31 arrays deep. An
+  int or valid UTF-8 string keys, nested at most the JSON depth. An
   object anywhere in it (a `stdClass`, a `JsonSerializable`, a
   `DateTimeImmutable`, an enum case), `INF`, `NAN`, a malformed UTF-8
   string or deeper nesting throws `MappingException` from `persist()` or
   `flush()` before SQL. A `stdClass` property's value is a `stdClass`,
   and an `array|stdClass` property's a `stdClass` or a list, holding
   the same leaves, lists and `stdClass` instances, with valid UTF-8
-  property names, nested at most 31 lists and objects deep together. An
-  array with keys other than `0` to `n-1` in order, a subclass of
-  `stdClass`, any other object, a property name starting with a NUL
-  byte, which `json_encode()` skips, or the refusals above throw
-  `MappingException` the same way. The outermost array or object is the
-  first level. 31 levels is the most every supported database stores,
-  since the MariaDB `JSON` column's `json_valid()` check refuses 32, so
-  deeper nesting is refused before it can reach the server.
+  property names, nested at most the JSON depth in lists and objects
+  together. An array with keys other than `0` to `n-1` in order, a
+  subclass of `stdClass`, any other object, a property name starting
+  with a NUL byte, which `json_encode()` skips, or the refusals above
+  throw `MappingException` the same way.
+- **Depth.** The JSON depth is the most levels of nested arrays and
+  objects a value holds, the outermost one being the first: what the
+  connection's server stores in a JSON column and `json_decode()` reads
+  back. It is 100 on MySQL, 31 on MariaDB before 12.2, and 2499, the
+  most `json_decode()` reads when every level is an object, on MariaDB
+  12.2 and later and on PostgreSQL. `OrmFactory::create()` reads it once
+  from the link through `Kinetis\Persistence\Contract\ReportsJsonDepth`,
+  which every `kinetis/persistence` client implements, and refuses a
+  link that does not with `InvalidArgumentException`. A MySQL-family
+  client takes it from a connection's handshake, so creating the factory
+  opens a connection when the link has none open yet.
+  `OrmFactory::jsonDepth()` and `EntityManager::jsonDepth()` return it,
+  and a refusal message names it: a deeper value is refused before SQL
+  instead of failing on the server.
 - **Loading.** A driver value is the JSON text of an array or object.
   An `array` property decodes it with
-  `json_decode($text, true, 32, JSON_THROW_ON_ERROR)` into an array. A
+  `json_decode($text, true, $depth + 1, JSON_THROW_ON_ERROR)` into an
+  array, `$depth` being the JSON depth. A
   `stdClass` or `array|stdClass` property decodes it with
-  `json_decode($text, false, 32, JSON_THROW_ON_ERROR)`, so every JSON
+  `json_decode($text, false, $depth + 1, JSON_THROW_ON_ERROR)`, so every JSON
   object at any depth is a `stdClass` and every JSON array a list; a
   `stdClass` property refuses a top-level array. SQL `NULL` is admitted
   where the property is nullable. Malformed JSON, a top-level scalar or
@@ -1556,7 +1568,7 @@ $entities->flush(); // UPDATE webhooks SET headers = ?, payload = ? WHERE id = ?
   and never the value.
 - **Writing and changes.** The database value is
   `json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE |
-  JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION)`. The snapshot
+  JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION, $depth)`. The snapshot
   holds that encoding of the loaded value, and a flush compares the
   encoding of the current value with it, so a nested change, including
   one made in place on a loaded `stdClass`, is a change, and the spacing

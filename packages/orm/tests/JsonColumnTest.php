@@ -29,13 +29,13 @@ use stdClass;
  */
 final class JsonColumnTest extends TestCase
 {
-    private const string EXPECTED = 'takes an array of null, bool, int, finite float, UTF-8 string and nested array values at most 31 levels deep, or the JSON text of one';
+    private const string EXPECTED = 'takes an array of null, bool, int, finite float, UTF-8 string and nested array values at most %d levels deep, or the JSON text of one';
 
     private const string ANSWERS = ' It maps to table "surveys", column "answers".';
 
-    private const string OBJECT_EXPECTED = 'takes a stdClass of null, bool, int, finite float, UTF-8 string, list and nested stdClass values at most 31 levels deep, or the JSON text of a JSON object';
+    private const string OBJECT_EXPECTED = 'takes a stdClass of null, bool, int, finite float, UTF-8 string, list and nested stdClass values at most %d levels deep, or the JSON text of a JSON object';
 
-    private const string OBJECT_OR_LIST_EXPECTED = 'takes a stdClass or a list of null, bool, int, finite float, UTF-8 string, list and stdClass values at most 31 levels deep, or the JSON text of a JSON object or array';
+    private const string OBJECT_OR_LIST_EXPECTED = 'takes a stdClass or a list of null, bool, int, finite float, UTF-8 string, list and stdClass values at most %d levels deep, or the JSON text of a JSON object or array';
 
     private const string BODY = ' It maps to table "payloads", column "body".';
 
@@ -123,7 +123,6 @@ final class JsonColumnTest extends TestCase
         yield 'malformed JSON' => ['{"a":'];
         yield 'an empty string' => [''];
         yield 'a number beyond the float range' => ['{"a": 1e999}'];
-        yield 'nesting beyond the decode depth' => [self::nested(32)];
         yield 'an int' => [1];
     }
 
@@ -137,39 +136,95 @@ final class JsonColumnTest extends TestCase
             self::fail('The result was accepted.');
         } catch (MappingException $e) {
             $read = is_array($value) ? 'string' : get_debug_type($value);
-            self::assertSame(Survey::class . '::$answers ' . self::EXPECTED . ", got {$read}." . self::ANSWERS, $e->getMessage());
+            self::assertSame(Survey::class . '::$answers ' . $this->expected(self::EXPECTED) . ", got {$read}." . self::ANSWERS, $e->getMessage());
         }
     }
 
-    public function test_the_deepest_admitted_nesting_loads_and_writes(): void
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function depths(): iterable
     {
-        $deepest = self::nested(31);
-        $this->link->queue([['id' => 1, 'answers' => json_encode($deepest), 'extra_data' => null]]);
+        yield 'MariaDB before 12.2' => [31];
+        yield 'MySQL' => [100];
+        yield 'the decoder limit' => [2499];
+    }
 
-        $survey = $this->entities->repository(Survey::class)->findOrFail(1);
+    #[DataProvider('depths')]
+    public function test_the_deepest_admitted_nesting_loads_and_writes(int $depth): void
+    {
+        $entities = $this->surveys($depth);
+        $deepest = self::nested($depth);
+        $this->link->queue([['id' => 1, 'answers' => json_encode($deepest, depth: $depth), 'extra_data' => null]]);
+
+        $survey = $entities->repository(Survey::class)->findOrFail(1);
         self::assertSame($deepest, $survey->answers);
 
         $survey->answers = ['x' => $deepest[0]];
         $this->transaction->queue(new BufferedSqlResult([], 1, null));
-        $this->entities->flush();
+        $entities->flush();
 
         self::assertCount(1, $this->transaction->calls);
+        self::assertSame(json_encode(['x' => $deepest[0]], depth: $depth), $this->transaction->calls[0]['params'][0]);
     }
 
-    public function test_a_managed_value_nested_one_level_too_deep_is_refused_before_the_update(): void
+    #[DataProvider('depths')]
+    public function test_json_text_nested_one_level_too_deep_is_refused_on_load(int $depth): void
     {
-        $this->link->queue([['id' => 1, 'answers' => '[]', 'extra_data' => null]]);
-        $survey = $this->entities->repository(Survey::class)->findOrFail(1);
-        $survey->answers = self::nested(32);
+        $entities = $this->surveys($depth);
+        $this->link->queue([['id' => 1, 'answers' => json_encode(self::nested($depth + 1), depth: $depth + 1), 'extra_data' => null]]);
 
         try {
-            $this->entities->flush();
+            $entities->repository(Survey::class)->query()->get();
+            self::fail('The result was accepted.');
+        } catch (MappingException $e) {
+            self::assertSame(Survey::class . '::$answers ' . $this->expected(self::EXPECTED) . ', got string.' . self::ANSWERS, $e->getMessage());
+        }
+    }
+
+    #[DataProvider('depths')]
+    public function test_a_value_nested_one_level_too_deep_is_refused_before_the_insert(int $depth): void
+    {
+        $entities = $this->surveys($depth);
+        $survey = new Survey();
+        [$survey->id, $survey->answers, $survey->extra] = [1, self::nested($depth + 1), null];
+
+        try {
+            $entities->persist($survey);
             self::fail('The value was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Survey::class . '::$answers ' . self::EXPECTED . ', got array.' . self::ANSWERS, $e->getMessage());
+            self::assertSame(Survey::class . '::$answers ' . $this->expected(self::EXPECTED) . ', got array.' . self::ANSWERS, $e->getMessage());
         }
 
         self::assertSame([], $this->transaction->calls);
+    }
+
+    #[DataProvider('depths')]
+    public function test_a_managed_value_nested_one_level_too_deep_is_refused_before_the_update(int $depth): void
+    {
+        $entities = $this->surveys($depth);
+        $this->link->queue([['id' => 1, 'answers' => '[]', 'extra_data' => null]]);
+        $survey = $entities->repository(Survey::class)->findOrFail(1);
+        $survey->answers = self::nested($depth + 1);
+
+        try {
+            $entities->flush();
+            self::fail('The value was accepted.');
+        } catch (MappingException $e) {
+            self::assertSame(Survey::class . '::$answers ' . $this->expected(self::EXPECTED) . ', got array.' . self::ANSWERS, $e->getMessage());
+        }
+
+        self::assertSame([], $this->transaction->calls);
+    }
+
+    #[DataProvider('depths')]
+    public function test_the_factory_and_its_managers_report_the_link_depth(int $depth): void
+    {
+        $this->link->jsonDepth = $depth;
+        $factory = OrmFactory::create($this->link, MetadataRegistry::fromClasses([Survey::class]));
+
+        self::assertSame($depth, $factory->jsonDepth());
+        self::assertSame($depth, $factory->open()->jsonDepth());
     }
 
     /**
@@ -191,7 +246,6 @@ final class JsonColumnTest extends TestCase
         yield 'a nested NAN' => [['a' => ['b' => NAN]]];
         yield 'a malformed UTF-8 string' => [["\xC3\x28"]];
         yield 'a malformed UTF-8 key' => [["\xFF" => 1]];
-        yield 'nesting beyond the decode depth' => [self::nested(32)];
     }
 
     /**
@@ -209,7 +263,7 @@ final class JsonColumnTest extends TestCase
             $this->entities->persist($survey);
             self::fail('The value was accepted.');
         } catch (MappingException $e) {
-            self::assertSame(Survey::class . '::$answers ' . self::EXPECTED . ', got array.' . self::ANSWERS, $e->getMessage());
+            self::assertSame(Survey::class . '::$answers ' . $this->expected(self::EXPECTED) . ', got array.' . self::ANSWERS, $e->getMessage());
         }
 
         self::assertSame([], $this->transaction->calls);
@@ -361,7 +415,6 @@ final class JsonColumnTest extends TestCase
         yield 'a JSON null for a union property' => ['document', 'null', 'string'];
         yield 'malformed JSON' => ['body', '{"a":', 'string'];
         yield 'a key the decoder cannot name a property' => ['body', '{"\u0000a": 1}', 'string'];
-        yield 'mixed nesting beyond the decode depth' => ['document', json_encode(self::mixed(32)), 'string'];
         yield 'SQL NULL in a non-nullable column' => ['body', null, 'null'];
         yield 'an int' => ['document', 1, 'int'];
     }
@@ -379,17 +432,19 @@ final class JsonColumnTest extends TestCase
         } catch (MappingException $e) {
             self::assertSame(
                 $property === 'body'
-                    ? Payload::class . '::$body ' . self::OBJECT_EXPECTED . ", got {$read}." . self::BODY
-                    : Payload::class . '::$document ' . self::OBJECT_OR_LIST_EXPECTED . ", got {$read}." . self::DOCUMENT,
+                    ? Payload::class . '::$body ' . $this->expected(self::OBJECT_EXPECTED) . ", got {$read}." . self::BODY
+                    : Payload::class . '::$document ' . $this->expected(self::OBJECT_OR_LIST_EXPECTED) . ", got {$read}." . self::DOCUMENT,
                 $e->getMessage(),
             );
         }
     }
 
-    public function test_the_deepest_admitted_mixed_nesting_loads_and_writes(): void
+    #[DataProvider('depths')]
+    public function test_the_deepest_admitted_mixed_nesting_loads_and_writes(int $depth): void
     {
-        $deepest = self::mixed(31);
-        $this->link->queue([['id' => 1, 'body' => '{}', 'meta_data' => null, 'document' => json_encode($deepest), 'draft' => null]]);
+        $this->link->jsonDepth = $depth;
+        $deepest = self::mixed($depth);
+        $this->link->queue([['id' => 1, 'body' => '{}', 'meta_data' => null, 'document' => json_encode($deepest, depth: $depth), 'draft' => null]]);
         $entities = $this->payloads();
 
         $payload = $entities->repository(Payload::class)->findOrFail(1);
@@ -402,6 +457,35 @@ final class JsonColumnTest extends TestCase
         self::assertCount(1, $this->transaction->calls);
     }
 
+    #[DataProvider('depths')]
+    public function test_mixed_nesting_one_level_too_deep_is_refused_on_load_and_before_the_insert(int $depth): void
+    {
+        $this->link->jsonDepth = $depth;
+        $deeper = self::mixed($depth + 1);
+        $this->link->queue([['id' => 1, 'body' => '{}', 'meta_data' => null, 'document' => json_encode($deeper, depth: $depth + 1), 'draft' => null]]);
+        $entities = $this->payloads();
+        $expected = Payload::class . '::$document ' . $this->expected(self::OBJECT_OR_LIST_EXPECTED) . ', got %s.' . self::DOCUMENT;
+
+        try {
+            $entities->repository(Payload::class)->query()->get();
+            self::fail('The result was accepted.');
+        } catch (MappingException $e) {
+            self::assertSame(sprintf($expected, 'string'), $e->getMessage());
+        }
+
+        $payload = new Payload();
+        [$payload->id, $payload->body, $payload->meta, $payload->document, $payload->draft] = [1, new stdClass(), null, $deeper, null];
+
+        try {
+            $entities->persist($payload);
+            self::fail('The value was accepted.');
+        } catch (MappingException $e) {
+            self::assertSame(sprintf($expected, 'array'), $e->getMessage());
+        }
+
+        self::assertSame([], $this->transaction->calls);
+    }
+
     /**
      * @return iterable<string, array{'body'|'document', stdClass|list<mixed>}>
      */
@@ -412,7 +496,6 @@ final class JsonColumnTest extends TestCase
         yield 'a key json_encode() drops' => ['body', (object) ["\0a" => 1]];
         yield 'INF inside an object' => ['body', (object) ['a' => INF]];
         yield 'NAN in a list inside an object' => ['document', [(object) ['a' => [NAN]]]];
-        yield 'mixed nesting beyond the decode depth' => ['document', self::mixed(32)];
         yield 'a stdClass subclass' => ['body', new class extends stdClass {}];
         yield 'a nested stdClass subclass' => ['document', [new class extends stdClass {}]];
         yield 'a nested JsonSerializable' => ['body', (object) ['a' => new class implements JsonSerializable {
@@ -448,8 +531,8 @@ final class JsonColumnTest extends TestCase
             $read = get_debug_type($value);
             self::assertSame(
                 $property === 'body'
-                    ? Payload::class . '::$body ' . self::OBJECT_EXPECTED . ", got {$read}." . self::BODY
-                    : Payload::class . '::$document ' . self::OBJECT_OR_LIST_EXPECTED . ", got {$read}." . self::DOCUMENT,
+                    ? Payload::class . '::$body ' . $this->expected(self::OBJECT_EXPECTED) . ", got {$read}." . self::BODY
+                    : Payload::class . '::$document ' . $this->expected(self::OBJECT_OR_LIST_EXPECTED) . ", got {$read}." . self::DOCUMENT,
                 $e->getMessage(),
             );
         }
@@ -495,6 +578,20 @@ final class JsonColumnTest extends TestCase
         }
 
         return $array;
+    }
+
+    /** A manager of Survey over the link, reporting $depth. */
+    private function surveys(int $depth): EntityManager
+    {
+        $this->link->jsonDepth = $depth;
+
+        return OrmFactory::create($this->link, MetadataRegistry::fromClasses([Survey::class]))->open();
+    }
+
+    /** One of the expected-shape messages at the link's depth. */
+    private function expected(string $shape): string
+    {
+        return sprintf($shape, $this->link->jsonDepth);
     }
 
     private function payloads(): EntityManager

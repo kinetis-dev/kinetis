@@ -24,7 +24,9 @@ use Kinetis\Orm\Tests\Fixtures\Document;
 use Kinetis\Orm\Tests\Fixtures\Note;
 use Kinetis\Orm\Tests\Fixtures\Priority;
 use Kinetis\Orm\Tests\Fixtures\SpyMysqlLink;
+use Kinetis\Persistence\Contract\MysqlLink;
 use Kinetis\Persistence\Contract\MysqlTransaction;
+use Kinetis\Persistence\Contract\PostgresLink;
 use Kinetis\Persistence\Contract\PostgresTransaction;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -74,6 +76,38 @@ final class EntityManagerTest extends TestCase
         $this->expectExceptionMessage('OrmFactory::create() was given a transaction');
 
         OrmFactory::create($transaction, MetadataRegistry::fromClasses([Article::class]));
+    }
+
+    /**
+     * @return iterable<string, array{class-string<MysqlLink|PostgresLink>}>
+     */
+    public static function linksWithoutJsonDepth(): iterable
+    {
+        yield 'a MySQL link' => [MysqlLink::class];
+        yield 'a PostgreSQL link' => [PostgresLink::class];
+    }
+
+    /**
+     * @param class-string<MysqlLink|PostgresLink> $contract
+     */
+    #[DataProvider('linksWithoutJsonDepth')]
+    public function test_a_link_that_does_not_report_its_json_depth_cannot_create_a_factory(string $contract): void
+    {
+        $link = $this->createMock($contract);
+        $link->expects(self::never())->method('query');
+        $link->expects(self::never())->method('execute');
+
+        try {
+            OrmFactory::create($link, MetadataRegistry::fromClasses([Article::class]));
+            self::fail('The link was accepted.');
+        } catch (InvalidArgumentException $e) {
+            self::assertSame(
+                'OrmFactory::create() was given a link that does not report the JSON depth its server stores ('
+                . $link::class . '). Pass a client that implements Kinetis\Persistence\Contract\ReportsJsonDepth, as '
+                . 'every Kinetis\Persistence\Driver client does.',
+                $e->getMessage(),
+            );
+        }
     }
 
     public function test_hydration_bypasses_the_constructor_and_writes_every_visibility(): void
@@ -530,7 +564,7 @@ final class EntityManagerTest extends TestCase
      */
     private static function articlePlan(): EntityPlan
     {
-        return new EntityPlan(MetadataRegistry::fromClasses([Article::class])->toArray()['entities'][0]);
+        return new EntityPlan(MetadataRegistry::fromClasses([Article::class])->toArray()['entities'][0], 100);
     }
 
     /**
